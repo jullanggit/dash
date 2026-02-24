@@ -2,7 +2,7 @@
   description = "Dashboard Devshell";
 
   inputs = {
-    host.url = "path:/etc/nixos";
+    host.url = "git+file:///etc/nixos";
 
     nixpkgs.follows = "host/nixpkgs";
 
@@ -20,6 +20,7 @@
       nixpkgs,
       rust-overlay,
       flake-utils,
+      ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
