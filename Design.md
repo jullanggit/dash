@@ -1,6 +1,7 @@
 - multiple dashboards
   - Metrics
   - Actual-Budget
+  - spotify rating stats
   - Habits?
   - Workouts?
   - Todo's
