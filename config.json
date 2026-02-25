@@ -1,0 +1,50 @@
+{
+  "mimir": {
+    "url": "localhost:3001/mimir"
+  },
+  "dashboards": [
+    {
+      "name": "Device Metrics",
+      "width": 4,
+      "elements": [
+        {
+          "type": "graph",
+          "name": "Cpu usage",
+          "formula": "(1 - query(cpuUsage)) * 100",
+          "queries": [
+            {
+              "name": "cpuUsage",
+              "type": "mimir",
+              "content": "avg by(instance) rate(node_cpu_seconds_total{mode=\"idle\", instance=\"$hostname\"}[1m])"
+            }
+          ],
+          "size": {
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "type": "graph",
+          "name": "Memory usage",
+          "formula": "(1 - (query(memAvailable) / query(memTotal)) * 100",
+          "queries": [
+            {
+              "name": "memAvailable",
+              "type": "mimir",
+              "content": "node_memory_MemAvailable_bytes{instance:\"$hostname\"}"
+            },
+            {
+              "name": "memTotal",
+              "type": "mimir",
+              "content": "node_memory_MemTotal_bytes{instance:\"$hostname\"}"
+            }
+          ],
+          "size": {
+            "width": 2,
+            "height": 1
+          }
+        }
+      ]
+    }
+  ]
+}
