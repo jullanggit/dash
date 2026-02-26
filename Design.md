@@ -10,3 +10,7 @@
 | - | - | - |
 | Metric | Mimir -> Prometheus | prometheus-http-query |
 | Actual-Budget | Actual-Budget | actual-budget api? or direct sql query? |
+
+## Element types
+- graph
+- stat = graph + number
