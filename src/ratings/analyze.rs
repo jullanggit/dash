@@ -57,7 +57,7 @@ pub fn analyze(data: Data) -> AnalyzedData {
             (0., 0.),
             |(weighted_sum, weight_sum), (rating, time)| {
                 let delta = now - *time;
-                let weight = (delta / HALF_LIFE).sqrt();
+                let weight = (delta / HALF_LIFE).sqrt() as f32;
 
                 (weighted_sum + *rating * weight, weight)
             },

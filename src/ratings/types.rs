@@ -4,6 +4,8 @@ use serde::Deserialize;
 use time::UtcDateTime;
 
 type RatingCategory = String;
+
+#[derive(Deserialize)]
 pub struct Data {
     pub ratings: HashMap<RatingCategory, Vec<Rating>>,
 }
@@ -12,7 +14,7 @@ type Something = ();
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Rating {
+pub struct Rating {
     pub uid: String,
     pub play_index: Option<Something>,
     pub added_at: UtcDateTime,
@@ -38,7 +40,7 @@ type Uri = String;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AddedBy {
+pub struct AddedBy {
     pub uri: Uri,
     pub username: String,
     pub display_name: String,
@@ -46,7 +48,7 @@ struct AddedBy {
 }
 
 #[derive(Deserialize)]
-struct Album {
+pub struct Album {
     pub uri: Uri,
     pub name: String,
     pub artist: Artist,
@@ -54,18 +56,18 @@ struct Album {
 }
 
 #[derive(Deserialize)]
-struct Image {
+pub struct Image {
     pub url: String, // not an http(s) url
     pub label: String,
 }
 
 #[derive(Deserialize)]
-struct Artist {
+pub struct Artist {
     pub uri: Uri,
     pub name: String,
 }
 
 #[derive(Deserialize)]
-struct TrackDuration {
+pub struct TrackDuration {
     pub milliseconds: u64,
 }
