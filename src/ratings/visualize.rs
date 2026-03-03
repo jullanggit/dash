@@ -8,8 +8,9 @@ pub fn visualize(data: AnalyzedData) {
         .collect::<Vec<_>>();
     vec.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
 
-    println!("Top 10 Songs by Rating:");
-    for (name, rating) in &vec[0..10] {
+    let n = 100000;
+    println!("Top {n} Songs by Rating:");
+    for (name, rating) in vec.iter().take(n) {
         println!("{name} - {rating}")
     }
 }
