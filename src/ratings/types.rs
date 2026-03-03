@@ -5,21 +5,14 @@ use time::UtcDateTime;
 
 type RatingCategory = String;
 
-#[derive(Deserialize)]
-pub struct Data {
-    pub ratings: HashMap<RatingCategory, Vec<Rating>>,
-}
-
-type Something = ();
+pub type Data = HashMap<RatingCategory, Vec<Rating>>;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rating {
     pub uid: String,
-    pub play_index: Option<Something>,
-    pub added_at: UtcDateTime,
+    pub added_at: String,
     pub added_by: AddedBy,
-    pub format_list_attributes: Something,
     pub uri: Uri,
     pub name: String,
     pub album: Album,
@@ -44,7 +37,6 @@ pub struct AddedBy {
     pub uri: Uri,
     pub username: String,
     pub display_name: String,
-    pub images: Vec<Something>,
 }
 
 #[derive(Deserialize)]

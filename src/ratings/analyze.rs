@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use time::{Duration, UtcDateTime};
+use time::{format_description::well_known::Rfc3339, Duration, UtcDateTime};
 
 use crate::ratings::types::Data;
 
@@ -27,7 +27,7 @@ pub fn analyze(data: Data) -> AnalyzedData {
         songs: HashMap::new(),
     };
 
-    for (rating_category, ratings) in data.ratings {
+    for (rating_category, ratings) in data {
         let rating_category: f32 = rating_category.parse().unwrap();
         for rating in ratings {
             let song = Song {
@@ -41,9 +41,10 @@ pub fn analyze(data: Data) -> AnalyzedData {
 
             let entry = out.songs.entry(song).or_insert_with(AnalyzedSong::default);
 
-            entry
-                .rating_history
-                .push((rating_category, rating.added_at));
+            entry.rating_history.push((
+                rating_category,
+                UtcDateTime::parse(&rating.added_at, &Rfc3339).unwrap(),
+            ));
             entry.album = rating.album.name;
             entry.duration = Duration::milliseconds(rating.duration.milliseconds as i64);
         }
@@ -57,7 +58,7 @@ pub fn analyze(data: Data) -> AnalyzedData {
             (0., 0.),
             |(weighted_sum, weight_sum), (rating, time)| {
                 let delta = now - *time;
-                let weight = 0.5_f64.powf(dbg!(delta / HALF_LIFE)) as f32;
+                let weight = 0.5_f64.powf(delta / HALF_LIFE) as f32;
 
                 (weighted_sum + *rating * weight, weight_sum + weight)
             },
