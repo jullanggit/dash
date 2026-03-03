@@ -1,17 +1,22 @@
+use std::{env, fs};
+
 // The dioxus prelude contains a ton of common items used in dioxus apps. It's a good idea to import wherever you
 // need dioxus
 use dioxus::prelude::*;
 
 use views::{Blog, Home, Navbar};
 
+use crate::ratings::{analyze, visualize};
+
 /// Define a components module that contains all shared components for our app.
 mod components;
+mod ratings;
 /// Define a views module that contains the UI for all Layouts and Routes for our app.
 mod views;
 
 /// The Route enum is used to define the structure of internal routes in our app. All route enums need to derive
 /// the [`Routable`] trait, which provides the necessary methods for the router to work.
-/// 
+///
 /// Each variant represents a different URL pattern that can be matched by the router. If that pattern is matched,
 /// the components for that route will be rendered.
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -42,7 +47,12 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 fn main() {
     // The `launch` function is the main entry point for a dioxus app. It takes a component and renders it with the platform feature
     // you have enabled
-    dioxus::launch(App);
+    // dioxus::launch(App);
+
+    let data_path = env::args().nth(1).unwrap();
+    let data = serde_json::from_str(&fs::read_to_string(data_path).unwrap()).unwrap();
+    let analyzed = analyze(data);
+    visualize(analyzed);
 }
 
 /// App is the main component of our app. Components are the building blocks of dioxus apps. Each component is a function
