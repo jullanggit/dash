@@ -6,7 +6,7 @@ pub fn visualize(data: AnalyzedData) {
         .iter()
         .map(|(song, analyzed)| (&song.name, analyzed.canonical_rating))
         .collect::<Vec<_>>();
-    vec.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
+    vec.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
 
     println!("Top 10 Songs by Rating:");
     for (name, rating) in &vec[0..10] {
