@@ -22,41 +22,43 @@ pub struct AnalyzedSong {
     pub duration: Duration,
 }
 
-pub fn analyze(data: Data) -> AnalyzedData {
-    let mut out = AnalyzedData {
-        songs: HashMap::new(),
-    };
+impl Data {
+    pub fn analyze(&self) -> AnalyzedData {
+        let mut out = AnalyzedData {
+            songs: HashMap::new(),
+        };
 
-    for (rating_category, ratings) in data {
-        let rating_category: f32 = rating_category.parse().unwrap();
-        for rating in ratings {
-            let song = Song {
-                name: rating.name,
-                artists: rating
-                    .artists
-                    .iter()
-                    .map(|artist| artist.name.clone())
-                    .collect(),
-            };
+        for (rating_category, ratings) in self.iter() {
+            let rating_category: f32 = rating_category.parse().unwrap();
+            for rating in ratings {
+                let song = Song {
+                    name: rating.name.clone(),
+                    artists: rating
+                        .artists
+                        .iter()
+                        .map(|artist| artist.name.clone())
+                        .collect(),
+                };
 
-            let entry = out.songs.entry(song).or_insert_with(AnalyzedSong::default);
+                let entry = out.songs.entry(song).or_insert_with(AnalyzedSong::default);
 
-            entry.rating_history.push((
-                rating_category,
-                UtcDateTime::parse(&rating.added_at, &Rfc3339).unwrap(),
-            ));
-            entry.album = rating.album.name;
-            entry.duration = Duration::milliseconds(rating.duration.milliseconds as i64);
+                entry.rating_history.push((
+                    rating_category,
+                    UtcDateTime::parse(&rating.added_at, &Rfc3339).unwrap(),
+                ));
+                entry.album = rating.album.name.clone();
+                entry.duration = Duration::milliseconds(rating.duration.milliseconds as i64);
+            }
         }
-    }
-    for (_, analyzed) in &mut out.songs {
-        analyzed
-            .rating_history
-            .sort_by_key(|(_, date_time)| *date_time);
-        analyzed.canonical_rating = canonical_rating(&analyzed.rating_history)
-    }
+        for (_, analyzed) in &mut out.songs {
+            analyzed
+                .rating_history
+                .sort_by_key(|(_, date_time)| *date_time);
+            analyzed.canonical_rating = canonical_rating(&analyzed.rating_history)
+        }
 
-    out
+        out
+    }
 }
 
 pub fn canonical_rating(rating_history: &[(f32, UtcDateTime)]) -> f32 {

@@ -1,7 +1,8 @@
 mod analyze;
-pub use analyze::analyze;
+pub use analyze::*;
 
 mod types;
+pub use types::*;
 
 mod visualize;
-pub use visualize::visualize;
+pub use visualize::*;

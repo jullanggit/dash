@@ -6,16 +6,17 @@ use std::{
 };
 
 use crate::ratings::analyze::{canonical_rating, AnalyzedData};
+#[cfg(feature = "server")]
 use charming::{
     component::{Axis, Title},
     datatype::CompositeValue,
     element::{AreaStyle, AxisType, Color, ColorStop, LineStyle},
     series::Line,
-    Chart, ImageRenderer,
+    Chart, HtmlRenderer,
 };
 use time::{Date, UtcDateTime};
 
-pub fn visualize(data: AnalyzedData) {
+pub fn rating_per_song(data: AnalyzedData) {
     let mut vec = data
         .songs
         .iter()
@@ -28,15 +29,10 @@ pub fn visualize(data: AnalyzedData) {
     for (name, rating) in vec.iter().take(n) {
         println!("{name} - {rating}")
     }
-
-    create_dir_all("charts").unwrap();
-
-    canonical_rating_distribution(&data);
-    average_rating_per_day(&data);
-    song_canonical_rating_histories(&data);
 }
 
-fn canonical_rating_distribution(data: &AnalyzedData) {
+#[cfg(feature = "server")]
+pub fn canonical_rating_distribution(data: &AnalyzedData) -> Chart {
     let mut ratings = [0; 11];
     for rating in data
         .songs
@@ -47,7 +43,7 @@ fn canonical_rating_distribution(data: &AnalyzedData) {
     }
 
     // chart
-    let chart = Chart::new()
+    Chart::new()
         .title(Title::new().text("Canonical Rating Distribution"))
         .x_axis(Axis::new().type_(AxisType::Category).data(Vec::from_iter(
             (0..=10).map(|num| (num as f32 / 2.).to_string()),
@@ -60,14 +56,11 @@ fn canonical_rating_distribution(data: &AnalyzedData) {
                 .area_style(AreaStyle::new().color(linear_gradient()).opacity(0.8))
                 .smooth(true)
                 .data(ratings.to_vec()),
-        );
-
-    ImageRenderer::new(1920, 1080)
-        .save(&chart, "charts/canonical_rating_distribution.svg")
-        .unwrap();
+        )
 }
 
-fn average_rating_per_day(data: &AnalyzedData) {
+#[cfg(feature = "server")]
+pub fn average_rating_per_day(data: &AnalyzedData) -> Chart {
     let ratings_per_day: BTreeMap<Date, Vec<f32>> = data
         .songs
         .iter()
@@ -86,7 +79,7 @@ fn average_rating_per_day(data: &AnalyzedData) {
         })
         .collect();
 
-    let chart = Chart::new()
+    Chart::new()
         .title(Title::new().text("Average Rating per Day"))
         .x_axis(Axis::new().type_(AxisType::Time))
         .y_axis(Axis::new().type_(AxisType::Value))
@@ -96,14 +89,13 @@ fn average_rating_per_day(data: &AnalyzedData) {
                 .line_style(LineStyle::new().color(linear_gradient()))
                 .smooth(true)
                 .data(average_rating_per_day),
-        );
-
-    ImageRenderer::new(1920, 1080)
-        .save(&chart, "charts/average_rating_per_day.svg")
-        .unwrap();
+        )
 }
 
-fn song_canonical_rating_histories(data: &AnalyzedData) {
+#[cfg(feature = "server")]
+pub fn song_canonical_rating_histories(data: &AnalyzedData) -> Chart {
+    use charming::element::{Formatter, JsFunction, Tooltip, Trigger};
+
     let now = UtcDateTime::now();
     let mut hasher = DefaultHasher::new();
     let chart = data
@@ -119,7 +111,7 @@ fn song_canonical_rating_histories(data: &AnalyzedData) {
                             canonical_rating(&analyzed.rating_history[0..=i]),
                         )
                     })
-                    .chain(std::iter::once((now, analyzed.canonical_rating)))
+                    .chain(std::iter::once((now, analyzed.canonical_rating))) // ensure all lines go to the end
                     .map(|(time, rating)| {
                         vec![
                             ((time.unix_timestamp_nanos() / 1_000_000) as i64).into(),
@@ -133,29 +125,43 @@ fn song_canonical_rating_histories(data: &AnalyzedData) {
             Chart::new()
                 .title(Title::new().text("Canonical Rating Histories"))
                 .x_axis(Axis::new().type_(AxisType::Time))
-                .y_axis(Axis::new().type_(AxisType::Value)),
+                .y_axis(Axis::new().type_(AxisType::Value))
+                .tooltip(
+                    Tooltip::new().trigger(Trigger::Axis), // .formatter(Formatter::Function(JsFunction::new_with_args(
+                                                           //     "params",
+                                                           //     "return params.map(p => p.seriesName).join('<br/>');",
+                                                           // ))),
+                ),
             |chart, data| {
+                use charming::element::{Formatter, ItemStyle, Symbol, Tooltip, Trigger};
+
                 data.0.name.hash(&mut hasher);
                 let hash: u64 = hasher.finish();
                 let [r, g, b] = array::from_fn(|i| ((hash >> i * 8) & 0xFF) as u8);
+                let color = Color::Value(format!("rgb({r}, {g}, {b})"));
+
                 chart.series(
                     Line::new()
                         .name(&data.0.name)
-                        .show_symbol(false)
-                        .line_style(
-                            LineStyle::new().color(Color::Value(format!("rgb({r}, {g}, {b})"))),
-                        )
+                        .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
+                            Formatter::Function(JsFunction::new_with_args(
+                                "params",
+                                "return `${params.seriesName}: ${params.value[1].toFixed(2)}`",
+                            )),
+                        ))
+                        // .show_symbol(false)
+                        .item_style(ItemStyle::new().color(color.clone()))
+                        .line_style(LineStyle::new().color(color))
                         .smooth(true)
                         .data(data.1),
                 )
             },
         );
 
-    ImageRenderer::new(1920, 1080)
-        .save(&chart, "charts/song_canonical_rating_histories.svg")
-        .unwrap();
+    chart
 }
 
+#[cfg(feature = "server")]
 fn linear_gradient() -> Color {
     Color::LinearGradient {
         x: 0.0,

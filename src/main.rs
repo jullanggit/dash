@@ -4,12 +4,13 @@ use std::{env, fs};
 // need dioxus
 use dioxus::prelude::*;
 
-use views::{Blog, Home, Navbar};
+use views::{Home, Navbar, Spotify};
 
-use crate::ratings::{analyze, visualize};
+use crate::config::Config;
 
 /// Define a components module that contains all shared components for our app.
 mod components;
+mod config;
 mod ratings;
 /// Define a views module that contains the UI for all Layouts and Routes for our app.
 mod views;
@@ -31,10 +32,10 @@ enum Route {
         Home {},
         // The route attribute can include dynamic parameters that implement [`std::str::FromStr`] and [`std::fmt::Display`] with the `:` syntax.
         // In this case, id will match any integer like `/blog/123` or `/blog/-456`.
-        #[route("/blog/:id")]
+        #[route("/spotify")]
         // Fields of the route variant will be passed to the component as props. In this case, the blog component must accept
         // an `id` prop of type `i32`.
-        Blog { id: i32 },
+        Spotify {}
 }
 
 // We can import assets in dioxus with the `asset!` macro. This macro takes a path to an asset relative to the crate root.
@@ -47,12 +48,7 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 fn main() {
     // The `launch` function is the main entry point for a dioxus app. It takes a component and renders it with the platform feature
     // you have enabled
-    // dioxus::launch(App);
-
-    let data_path = env::args().nth(1).unwrap();
-    let data = serde_json::from_str(&fs::read_to_string(data_path).unwrap()).unwrap();
-    let analyzed = analyze(data);
-    visualize(analyzed);
+    dioxus::launch(App);
 }
 
 /// App is the main component of our app. Components are the building blocks of dioxus apps. Each component is a function

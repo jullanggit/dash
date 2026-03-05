@@ -1,11 +1,18 @@
-use std::collections::HashMap;
-
 use serde::Deserialize;
+use std::{collections::HashMap, ops::Deref};
 use time::UtcDateTime;
 
 type RatingCategory = String;
 
-pub type Data = HashMap<RatingCategory, Vec<Rating>>;
+#[derive(Deserialize, Debug)]
+pub struct Data(HashMap<RatingCategory, Vec<Rating>>);
+impl Deref for Data {
+    type Target = HashMap<RatingCategory, Vec<Rating>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 type Uri = String;
 
 structstruck::strike!(
@@ -30,7 +37,7 @@ structstruck::strike!(
                 pub label: String,
             }>,
         },
-        pub artists: Vec<struct Artist {
+        pub artists: Vec<pub struct Artist {
             pub uri: Uri,
             pub name: String,
         }>,
