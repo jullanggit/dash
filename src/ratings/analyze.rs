@@ -49,23 +49,29 @@ pub fn analyze(data: Data) -> AnalyzedData {
             entry.duration = Duration::milliseconds(rating.duration.milliseconds as i64);
         }
     }
+    for (_, analyzed) in &mut out.songs {
+        analyzed
+            .rating_history
+            .sort_by_key(|(_, date_time)| *date_time);
+        analyzed.canonical_rating = canonical_rating(&analyzed.rating_history)
+    }
 
-    for (song, analyzed) in &mut out.songs {
-        const HALF_LIFE: Duration = Duration::weeks(26);
+    out
+}
 
-        let now = UtcDateTime::now();
-        let (weighted_sum, weight_sum) = analyzed.rating_history.iter().fold(
-            (0., 0.),
-            |(weighted_sum, weight_sum), (rating, time)| {
+pub fn canonical_rating(rating_history: &[(f32, UtcDateTime)]) -> f32 {
+    const HALF_LIFE: Duration = Duration::weeks(26);
+
+    let now = UtcDateTime::now();
+    let (weighted_sum, weight_sum) =
+        rating_history
+            .iter()
+            .fold((0., 0.), |(weighted_sum, weight_sum), (rating, time)| {
                 let delta = now - *time;
                 let weight = 0.5_f64.powf(delta / HALF_LIFE) as f32;
 
                 (weighted_sum + *rating * weight, weight_sum + weight)
-            },
-        );
+            });
 
-        analyzed.canonical_rating = weighted_sum / weight_sum;
-    }
-
-    out
+    weighted_sum / weight_sum
 }

@@ -1,9 +1,11 @@
 use std::{
+    array,
     collections::{BTreeMap, HashMap},
     fs::create_dir_all,
+    hash::{DefaultHasher, Hash, Hasher},
 };
 
-use crate::ratings::analyze::AnalyzedData;
+use crate::ratings::analyze::{canonical_rating, AnalyzedData};
 use charming::{
     component::{Axis, Title},
     datatype::CompositeValue,
@@ -31,7 +33,7 @@ pub fn visualize(data: AnalyzedData) {
 
     canonical_rating_distribution(&data);
     average_rating_per_day(&data);
-    // song_canonical_ratings(&data);
+    song_canonical_rating_histories(&data);
 }
 
 fn canonical_rating_distribution(data: &AnalyzedData) {
@@ -98,6 +100,59 @@ fn average_rating_per_day(data: &AnalyzedData) {
 
     ImageRenderer::new(1920, 1080)
         .save(&chart, "charts/average_rating_per_day.svg")
+        .unwrap();
+}
+
+fn song_canonical_rating_histories(data: &AnalyzedData) {
+    let now = UtcDateTime::now();
+    let mut hasher = DefaultHasher::new();
+    let chart = data
+        .songs
+        .iter()
+        .map(|(song, analyzed)| {
+            (
+                song,
+                (0..analyzed.rating_history.len())
+                    .map(|i| {
+                        (
+                            analyzed.rating_history[i].1,
+                            canonical_rating(&analyzed.rating_history[0..=i]),
+                        )
+                    })
+                    .chain(std::iter::once((now, analyzed.canonical_rating)))
+                    .map(|(time, rating)| {
+                        vec![
+                            ((time.unix_timestamp_nanos() / 1_000_000) as i64).into(),
+                            rating.into(),
+                        ]
+                    })
+                    .collect::<Vec<Vec<CompositeValue>>>(),
+            )
+        })
+        .fold(
+            Chart::new()
+                .title(Title::new().text("Canonical Rating Histories"))
+                .x_axis(Axis::new().type_(AxisType::Time))
+                .y_axis(Axis::new().type_(AxisType::Value)),
+            |chart, data| {
+                data.0.name.hash(&mut hasher);
+                let hash: u64 = hasher.finish();
+                let [r, g, b] = array::from_fn(|i| ((hash >> i * 8) & 0xFF) as u8);
+                chart.series(
+                    Line::new()
+                        .name(&data.0.name)
+                        .show_symbol(false)
+                        .line_style(
+                            LineStyle::new().color(Color::Value(format!("rgb({r}, {g}, {b})"))),
+                        )
+                        .smooth(true)
+                        .data(data.1),
+                )
+            },
+        );
+
+    ImageRenderer::new(1920, 1080)
+        .save(&chart, "charts/song_canonical_rating_histories.svg")
         .unwrap();
 }
 
