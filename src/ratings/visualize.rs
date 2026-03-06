@@ -22,7 +22,7 @@ pub fn rating_per_song(data: AnalyzedData) {
         .iter()
         .map(|(song, analyzed)| (&song.name, analyzed.canonical_rating))
         .collect::<Vec<_>>();
-    vec.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
+    vec.sort_unstable_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
 
     let n = 100000;
     println!("Top {n} Songs by Rating:");
@@ -89,6 +89,35 @@ pub fn average_rating_per_day(data: &AnalyzedData) -> Chart {
                 .line_style(LineStyle::new().color(linear_gradient()))
                 .smooth(true)
                 .data(average_rating_per_day),
+        )
+}
+
+#[cfg(feature = "server")]
+pub fn num_ratings_history(data: &AnalyzedData) -> Chart {
+    let mut rating_times = data
+        .songs
+        .iter()
+        .flat_map(|(_, data)| data.rating_history.iter().map(|(_, time)| time))
+        .collect::<Vec<_>>();
+    rating_times.sort_unstable();
+
+    let num_ratings_history = rating_times
+        .iter()
+        .enumerate()
+        .map(|(num, time)| (**time, num as i64))
+        .map(to_composite_values)
+        .collect();
+
+    Chart::new()
+        .title(Title::new().text("Num Ratings"))
+        .x_axis(Axis::new().type_(AxisType::Time))
+        .y_axis(Axis::new().type_(AxisType::Value))
+        .series(
+            Line::new()
+                .show_symbol(false)
+                .line_style(LineStyle::new().color(linear_gradient()))
+                .smooth(true)
+                .data(num_ratings_history),
         )
 }
 
@@ -173,4 +202,14 @@ fn linear_gradient() -> Color {
             ColorStop::new(1.0, "rgb(1, 191, 236)"),
         ],
     }
+}
+
+#[cfg(feature = "server")]
+fn to_composite_values(
+    (time, value): (UtcDateTime, impl Into<CompositeValue>),
+) -> Vec<CompositeValue> {
+    vec![
+        ((time.unix_timestamp_nanos() / 1_000_000) as i64).into(),
+        value.into(),
+    ]
 }
