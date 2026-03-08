@@ -85,7 +85,7 @@ pub fn average_rating_per_day(data: &AnalyzedData) -> Chart {
         .y_axis(Axis::new().type_(AxisType::Value))
         .series(
             Line::new()
-                // .show_symbol(false)
+                .show_symbol(false)
                 .line_style(LineStyle::new().color(linear_gradient()))
                 .smooth(true)
                 .data(average_rating_per_day),
@@ -101,12 +101,24 @@ pub fn num_ratings_history(data: &AnalyzedData) -> Chart {
         .collect::<Vec<_>>();
     rating_times.sort_unstable();
 
-    let num_ratings_history = rating_times
+    let history = |times: Vec<&UtcDateTime>| {
+        times
+            .iter()
+            .enumerate()
+            .map(|(num, time)| (**time, num as i64))
+            .map(to_composite_values)
+            .collect()
+    };
+    let num_ratings_history = history(rating_times);
+
+    let mut first_rating_times = data
+        .songs
         .iter()
-        .enumerate()
-        .map(|(num, time)| (**time, num as i64))
-        .map(to_composite_values)
-        .collect();
+        .filter_map(|(_, data)| data.rating_history.iter().map(|(_, time)| time).min())
+        .collect::<Vec<_>>();
+    first_rating_times.sort_unstable();
+
+    let num_first_ratings_history = history(first_rating_times);
 
     Chart::new()
         .title(Title::new().text("Num Ratings"))
@@ -118,6 +130,13 @@ pub fn num_ratings_history(data: &AnalyzedData) -> Chart {
                 .line_style(LineStyle::new().color(linear_gradient()))
                 .smooth(true)
                 .data(num_ratings_history),
+        )
+        .series(
+            Line::new()
+                .show_symbol(false)
+                .line_style(LineStyle::new().color(linear_gradient2()))
+                .smooth(true)
+                .data(num_first_ratings_history),
         )
 }
 
@@ -200,6 +219,20 @@ fn linear_gradient() -> Color {
         color_stops: vec![
             ColorStop::new(0.0, "rgb(128, 255, 165)"),
             ColorStop::new(1.0, "rgb(1, 191, 236)"),
+        ],
+    }
+}
+
+#[cfg(feature = "server")]
+fn linear_gradient2() -> Color {
+    Color::LinearGradient {
+        x: 0.0,
+        y: 0.0,
+        x2: 0.0,
+        y2: 1.0,
+        color_stops: vec![
+            ColorStop::new(0.0, "rgb(59, 130, 246)"),
+            ColorStop::new(1.0, "rgb(147, 51, 234)"),
         ],
     }
 }

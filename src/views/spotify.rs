@@ -41,8 +41,8 @@ async fn charts() -> Result<[String; 4]> {
     Ok([
         canonical_rating_distribution,
         average_rating_per_day,
-        song_canonical_rating_histories,
         num_ratings_history,
+        song_canonical_rating_histories,
     ]
     .map(|f| {
         let chart = f(&analyzed_data);
