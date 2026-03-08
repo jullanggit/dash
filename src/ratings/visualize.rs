@@ -10,7 +10,9 @@ use crate::ratings::analyze::{canonical_rating, AnalyzedData};
 use charming::{
     component::{Axis, Title},
     datatype::CompositeValue,
-    element::{AreaStyle, AxisType, Color, ColorStop, LineStyle},
+    element::{
+        AreaStyle, AxisType, Color, ColorStop, Formatter, JsFunction, LineStyle, Tooltip, Trigger,
+    },
     series::Line,
     Chart, HtmlRenderer,
 };
@@ -124,8 +126,18 @@ pub fn num_ratings_history(data: &AnalyzedData) -> Chart {
         .title(Title::new().text("Num Ratings"))
         .x_axis(Axis::new().type_(AxisType::Time))
         .y_axis(Axis::new().type_(AxisType::Value))
+        // TODO: maybe ensure that all points have a value from both series
+        .tooltip(
+            Tooltip::new()
+                .trigger(Trigger::Axis)
+                .formatter(Formatter::Function(JsFunction::new_with_args(
+                    "params",
+                    "console.log(params); return params.map(p => `${p.seriesName}: ${p.dataIndex}`).join('<br/>');",
+                ))),
+        )
         .series(
             Line::new()
+                .name("Total number of Ratings")
                 .show_symbol(false)
                 .line_style(LineStyle::new().color(linear_gradient()))
                 .smooth(true)
@@ -133,6 +145,7 @@ pub fn num_ratings_history(data: &AnalyzedData) -> Chart {
         )
         .series(
             Line::new()
+                .name("Number of rated Songs")
                 .show_symbol(false)
                 .line_style(LineStyle::new().color(linear_gradient2()))
                 .smooth(true)
