@@ -103,16 +103,6 @@ pub fn num_ratings_history(data: &AnalyzedData) -> Chart {
         .collect::<Vec<_>>();
     rating_times.sort_unstable();
 
-    let history = |times: Vec<&UtcDateTime>| {
-        times
-            .iter()
-            .enumerate()
-            .map(|(num, time)| (**time, num as i64))
-            .map(to_composite_values)
-            .collect()
-    };
-    let num_ratings_history = history(rating_times);
-
     let mut first_rating_times = data
         .songs
         .iter()
@@ -120,6 +110,16 @@ pub fn num_ratings_history(data: &AnalyzedData) -> Chart {
         .collect::<Vec<_>>();
     first_rating_times.sort_unstable();
 
+    let history = |times: Vec<&UtcDateTime>| {
+        times
+            .iter()
+            .enumerate()
+            .chain(times.last().map(|time| (times.len(), time))) // ensure lines go to the end
+            .map(|(num, time)| (**time, num as i64))
+            .map(to_composite_values)
+            .collect()
+    };
+    let num_ratings_history = history(rating_times);
     let num_first_ratings_history = history(first_rating_times);
 
     Chart::new()
@@ -173,12 +173,7 @@ pub fn song_canonical_rating_histories(data: &AnalyzedData) -> Chart {
                         )
                     })
                     .chain(std::iter::once((now, analyzed.canonical_rating))) // ensure all lines go to the end
-                    .map(|(time, rating)| {
-                        vec![
-                            ((time.unix_timestamp_nanos() / 1_000_000) as i64).into(),
-                            rating.into(),
-                        ]
-                    })
+                    .map(to_composite_values)
                     .collect::<Vec<Vec<CompositeValue>>>(),
             )
         })
@@ -198,7 +193,7 @@ pub fn song_canonical_rating_histories(data: &AnalyzedData) -> Chart {
 
                 data.0.name.hash(&mut hasher);
                 let hash: u64 = hasher.finish();
-                let [r, g, b] = array::from_fn(|i| ((hash >> i * 8) & 0xFF) as u8);
+                let [r, g, b] = array::from_fn(|i| ((hash >> (i * 8)) & 0xFF) as u8);
                 let color = Color::Value(format!("rgb({r}, {g}, {b})"));
 
                 chart.series(
