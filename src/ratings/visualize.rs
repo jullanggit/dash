@@ -45,7 +45,7 @@ pub fn canonical_rating_distribution(data: &AnalyzedData) -> Chart {
     }
 
     // chart
-    Chart::new()
+    base_chart()
         .title(Title::new().text("Canonical Rating Distribution"))
         .x_axis(Axis::new().type_(AxisType::Category).data(Vec::from_iter(
             (0..=10).map(|num| (num as f32 / 2.).to_string()),
@@ -81,7 +81,7 @@ pub fn average_rating_per_day(data: &AnalyzedData) -> Chart {
         })
         .collect();
 
-    Chart::new()
+    base_chart()
         .title(Title::new().text("Average Rating per Day"))
         .x_axis(Axis::new().type_(AxisType::Time))
         .y_axis(Axis::new().type_(AxisType::Value))
@@ -122,7 +122,7 @@ pub fn num_ratings_history(data: &AnalyzedData) -> Chart {
     let num_ratings_history = history(rating_times);
     let num_first_ratings_history = history(first_rating_times);
 
-    Chart::new()
+    base_chart()
         .title(Title::new().text("Num Ratings"))
         .x_axis(Axis::new().type_(AxisType::Time))
         .y_axis(Axis::new().type_(AxisType::Value))
@@ -178,7 +178,7 @@ pub fn song_canonical_rating_histories(data: &AnalyzedData) -> Chart {
             )
         })
         .fold(
-            Chart::new()
+            base_chart()
                 .title(Title::new().text("Canonical Rating Histories"))
                 .x_axis(Axis::new().type_(AxisType::Time))
                 .y_axis(Axis::new().type_(AxisType::Value))
@@ -253,4 +253,12 @@ fn to_composite_values(
         ((time.unix_timestamp_nanos() / 1_000_000) as i64).into(),
         value.into(),
     ]
+}
+
+#[cfg(feature = "server")]
+pub fn base_chart() -> Chart {
+    use charming::component::{Feature, Toolbox, ToolboxDataZoom};
+
+    // TODO: see if I can make this preserve lines between off-screen and on-screen datapoints when zooming
+    Chart::new().toolbox(Toolbox::new().feature(Feature::new().data_zoom(ToolboxDataZoom::new())))
 }
