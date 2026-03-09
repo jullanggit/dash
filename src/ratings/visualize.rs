@@ -181,7 +181,7 @@ pub fn song_canonical_rating_histories(data: &AnalyzedData) -> Chart {
             base_chart()
                 .title(Title::new().text("Canonical Rating Histories"))
                 .x_axis(Axis::new().type_(AxisType::Time))
-                .y_axis(Axis::new().type_(AxisType::Value))
+                .y_axis(Axis::new().type_(AxisType::Value).min(0.0).max(5.0))
                 .tooltip(
                     Tooltip::new().trigger(Trigger::Axis), // .formatter(Formatter::Function(JsFunction::new_with_args(
                                                            //     "params",
