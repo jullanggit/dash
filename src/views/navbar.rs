@@ -13,16 +13,9 @@ pub fn Navbar() -> Element {
     rsx! {
         document::Link { rel: "stylesheet", href: NAVBAR_CSS }
 
-        div {
-            id: "navbar",
-            Link {
-                to: Route::Home {},
-                "Home"
-            }
-            Link {
-                to: Route::Spotify { },
-                "Spotify"
-            }
+        div { id: "navbar",
+            Link { to: Route::Home {}, "Home" }
+            Link { to: Route::Spotify {}, "Spotify" }
         }
 
         // The `Outlet` component is used to render the next component inside the layout. In this case, it will render either

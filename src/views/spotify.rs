@@ -4,19 +4,20 @@ use dioxus::prelude::*;
 #[component]
 pub fn Spotify() -> Element {
     let charts = use_server_future(move || async move { charts().await })?;
-    rsx!(match &*charts.read_unchecked() {
-        Some(Ok(charts)) => {
-            rsx!(for (i, chart) in charts.iter().enumerate() {
-                iframe {
-                    width: 1920,
-                    height: 1080,
-                    srcdoc: "{chart}",
+    rsx!(
+        h2 { "Charts" }
+        match &*charts.read_unchecked() {
+            Some(Ok(charts)) => {
+                rsx! {
+                    for (i , chart) in charts.iter().enumerate() {
+                        iframe { width: 1920, height: 1080, srcdoc: "{chart}" }
+                    }
                 }
-            })
+            }
+            Some(Err(e)) => rsx! { "Error loading charts: {e}" },
+            None => rsx! { "Loading charts..." },
         }
-        Some(Err(e)) => rsx! { "Error loading charts: {e}" },
-        None => rsx! {"Loading charts..."},
-    })
+    )
 }
 
 #[server]
