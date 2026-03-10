@@ -35,20 +35,20 @@ pub fn rating_per_song(data: AnalyzedData) {
 
 #[cfg(feature = "server")]
 pub fn canonical_rating_distribution(data: &AnalyzedData) -> Chart {
-    let mut ratings = [0; 11];
+    let mut ratings = [0; 21];
     for rating in data
         .songs
         .iter()
         .flat_map(|(_, data)| data.rating_history.iter().map(|(rating, _)| *rating))
     {
-        ratings[(rating * 2.) as usize] += 1;
+        ratings[(rating * 4.) as usize] += 1;
     }
 
     // chart
     base_chart()
         .title(Title::new().text("Canonical Rating Distribution"))
         .x_axis(Axis::new().type_(AxisType::Category).data(Vec::from_iter(
-            (0..=10).map(|num| (num as f32 / 2.).to_string()),
+            (0..=20).map(|num| (num as f32 / 4.).to_string()),
         )))
         .y_axis(Axis::new().type_(AxisType::Value))
         .series(
