@@ -59,7 +59,7 @@ fn main() {
 fn App() -> Element {
     #[cfg(feature = "server")]
     {
-        use crate::views::spotify;
+        use crate::ratings::spotify;
 
         tokio::spawn(async move {
             spotify().await;

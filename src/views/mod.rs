@@ -16,8 +16,3 @@ pub use navbar::Navbar;
 
 mod spotify;
 pub use spotify::Spotify;
-
-#[cfg(feature = "server")]
-mod api;
-#[cfg(feature = "server")]
-pub use api::*;
