@@ -25,7 +25,11 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
                 Credentials::from_env().expect("Failed to get credentials"),
                 OAuth {
                     redirect_uri: "http://127.0.0.1:8888".into(), // TODO: get the actual url
-                    scopes: scopes!("user-read-playback-state"),  // TODO
+                    scopes: scopes!(
+                        "user-read-playback-state",
+                        "playlist-read-private",
+                        "playlist-read-collaborative"
+                    ),
                     ..Default::default()
                 },
                 Config {
@@ -48,7 +52,7 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
     }
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DiscreteRating(pub u8);
 impl DiscreteRating {
     const FACTOR: f32 = 4.0;

@@ -59,10 +59,10 @@ fn main() {
 fn App() -> Element {
     #[cfg(feature = "server")]
     {
-        use crate::ratings::spotify;
+        use crate::ratings::rating_playlists;
 
         tokio::spawn(async move {
-            spotify().await;
+            rating_playlists().await;
         });
     }
     // The `rsx!` macro lets us define HTML inside of rust. It expands to an Element with all of our HTML inside.
