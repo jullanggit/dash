@@ -104,51 +104,73 @@ macro_rules! refreshing {
     };
 }
 
-refreshing!(rating_playlists, HashMap<DiscreteRating, SimplifiedPlaylist>, {
-    let spotify = spotify().await;
-    let mut playlists = HashMap::new();
+refreshing!(
+    rating_playlists,
+    Vec<(f32, SimplifiedPlaylist)>,
+    {
+        let spotify = spotify().await;
+        let mut playlists = Vec::new();
 
-    let mut stream = spotify.current_user_playlists();
-    while let Some(playlist) = stream.next().await {
-        if let Ok(playlist) = playlist
-            && let Ok(rating) = playlist.name.parse::<f32>()
-            && (0.0..=5.0).contains(&rating)
-        {
-            let rating = DiscreteRating::from_float(rating);
-            match playlists.get(&rating) {
-                Some(rating) => panic!("Rating folder already present"),
-                None => playlists.insert(rating, playlist.clone()),
-            };
+        let mut stream = spotify.current_user_playlists();
+        while let Some(playlist) = stream.next().await {
+            if let Ok(playlist) = playlist
+                && let Ok(rating) = playlist.name.parse::<f32>()
+                && (0.0..=5.0).contains(&rating)
+            {
+                if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
+                    panic!("Rating folder already present")
+                } else {
+                    playlists.push((rating, playlist.clone()))
+                };
+            }
         }
-    }
-    playlists
-}, RATING_PLAYLISTS);
+        playlists
+    },
+    RATING_PLAYLISTS
+);
 
+#[derive(Clone, Debug, Default)]
 struct Analyzation {
     canonical_rating: f32,
     rating_history: Vec<(UtcDateTime, f32)>,
 }
 
-refreshing!(ratings, HashMap<FullTrack, Analyzation>, {
-    let spotify = spotify().await;
-    let playlists = rating_playlists().await;
-    let mut ratings = HashMap::new();
+refreshing!(
+    ratings,
+    Vec<(FullTrack, Analyzation)>,
+    {
+        let spotify = spotify().await;
+        let playlists = rating_playlists().await;
+        let mut ratings = Vec::new();
 
-    for (rating, playlist) in playlists {
-        spotify
-            .playlist_items(playlist.id, None, None)
-            .for_each(|result| async move {
-                match result {
-                   Ok(PlaylistItem {
-                       added_at: Some(added_at),
-                       track: Some(PlayableItem::Track(track)),
-                       ..
-                   }) =>  {},
-                   _ => {},
+        for (rating, playlist) in playlists {
+            let mut stream = spotify.playlist_items(playlist.id, None, None);
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(PlaylistItem {
+                        added_at: Some(added_at),
+                        track: Some(PlayableItem::Track(track)),
+                        ..
+                    }) => {
+                        let mut entry =
+                            match ratings.iter_mut().find_map(|(s_track, analyzation)| {
+                                (*s_track == track).then_some(analyzation)
+                            }) {
+                                Some(ratings) => ratings,
+                                None => &mut ratings.push_mut((track, Analyzation::default())).1,
+                            };
+
+                        entry.rating_history.push((
+                            UtcDateTime::from_unix_timestamp(added_at.timestamp()).unwrap(),
+                            rating,
+                        ));
+                    }
+                    other => eprintln!("Unexpected format for rating playlist entry: {other:?}"),
                 }
-            })
-            .await;
-    }
+            }
+        }
 
-    ratings
-}, RATINGS);
+        ratings
+    },
+    RATINGS
+);

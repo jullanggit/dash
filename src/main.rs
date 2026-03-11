@@ -1,3 +1,5 @@
+#![feature(macro_metavar_expr_concat)]
+
 use std::{env, fs};
 
 // The dioxus prelude contains a ton of common items used in dioxus apps. It's a good idea to import wherever you
