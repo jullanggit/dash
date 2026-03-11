@@ -30,13 +30,16 @@
           overlays = [ rust-overlay.overlays.default ];
         };
 
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-          targets = [ "wasm32-unknown-unknown" ];
-          extensions = [
-            "rust-src"
-            "rust-analyzer"
-          ];
-        };
+        rustToolchain = pkgs.rust-bin.selectLatestNightlyWith (
+          toolchain:
+          toolchain.default.override {
+            targets = [ "wasm32-unknown-unknown" ];
+            extensions = [
+              "rust-src"
+              "rust-analyzer"
+            ];
+          }
+        );
       in
       {
         devShells.default = pkgs.mkShell {

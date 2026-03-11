@@ -64,53 +64,60 @@ impl DiscreteRating {
     }
 }
 
-static RATING_PLAYLISTS: RwLock<Option<HashMap<DiscreteRating, SimplifiedPlaylist>>> =
-    RwLock::const_new(None);
+macro_rules! refreshing {
+    ($fn_name:ident, $return:ty, $body:block, $const:ident) => {
+        static $const: RwLock<Option<$return>> = RwLock::const_new(None);
+        static ${ concat($const, _LAST_FETCH) }: AtomicI64 = AtomicI64::new(0);
 
-static RATING_PLAYLISTS_LAST_FETCH: AtomicI64 = AtomicI64::new(0);
+        pub async fn $fn_name() -> $return {
+            let now = UtcDateTime::now();
 
-pub async fn rating_playlists() -> HashMap<DiscreteRating, SimplifiedPlaylist> {
-    let now = UtcDateTime::now();
-
-    let last_fetched = RATING_PLAYLISTS_LAST_FETCH.load(Ordering::Relaxed);
-    if (now - Duration::minutes(1)).unix_timestamp() > last_fetched
-        && RATING_PLAYLISTS_LAST_FETCH
-            .compare_exchange(
-                last_fetched,
-                now.unix_timestamp(),
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            )
-            .is_ok()
-        || RATING_PLAYLISTS.read().await.is_none()
-    {
-        let spotify = spotify().await;
-        let mut playlists = HashMap::new();
-
-        let mut stream = spotify.current_user_playlists();
-        while let Some(playlist) = stream.next().await {
-            if let Ok(playlist) = playlist
-                && let Ok(rating) = playlist.name.parse::<f32>()
-                && (0.0..=5.0).contains(&rating)
+            let last_fetched = ${ concat($const, _LAST_FETCH) }.load(Ordering::Relaxed);
+            if (now - Duration::minutes(1)).unix_timestamp() > last_fetched
+                && ${ concat($const, _LAST_FETCH) }
+                    .compare_exchange(
+                        last_fetched,
+                        now.unix_timestamp(),
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                || $const.read().await.is_none()
             {
-                let rating = DiscreteRating::from_float(rating);
-                match playlists.get(&rating) {
-                    Some(rating) => panic!("Rating folder already present"),
-                    None => playlists.insert(rating, playlist.clone()),
-                };
+                let new_value = $body;
+
+                let clone = new_value.clone();
+                tokio::spawn(async move { *$const.write().await = Some(clone) }); // update in the background
+
+                new_value
+            } else {
+                $const
+                    .read()
+                    .await
+                    .as_ref()
+                    .expect("We check hashmap being present above")
+                    .clone()
             }
         }
-
-        let clone = playlists.clone();
-        tokio::spawn(async move { *RATING_PLAYLISTS.write().await = Some(clone) }); // write to rating playlists in the background
-
-        playlists
-    } else {
-        RATING_PLAYLISTS
-            .read()
-            .await
-            .as_ref()
-            .expect("We check hashmap being present above")
-            .clone()
-    }
+    };
 }
+
+refreshing!(rating_playlists, HashMap<DiscreteRating, SimplifiedPlaylist>, {
+    let spotify = spotify().await;
+    let mut playlists = HashMap::new();
+
+    let mut stream = spotify.current_user_playlists();
+    while let Some(playlist) = stream.next().await {
+        if let Ok(playlist) = playlist
+            && let Ok(rating) = playlist.name.parse::<f32>()
+            && (0.0..=5.0).contains(&rating)
+        {
+            let rating = DiscreteRating::from_float(rating);
+            match playlists.get(&rating) {
+                Some(rating) => panic!("Rating folder already present"),
+                None => playlists.insert(rating, playlist.clone()),
+            };
+        }
+    }
+    playlists
+}, RATING_PLAYLISTS);
