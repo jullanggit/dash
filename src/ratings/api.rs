@@ -2,7 +2,7 @@ use dioxus::fullstack::get_server_url;
 use futures::{FutureExt, StreamExt};
 use rspotify::{
     AuthCodeSpotify, Config, Credentials, OAuth,
-    model::{PlaylistItem, SimplifiedPlaylist},
+    model::{FullTrack, PlayableItem, PlaylistItem, SimplifiedPlaylist},
     prelude::{BaseClient, OAuthClient},
     scopes,
 };
@@ -124,20 +124,30 @@ refreshing!(rating_playlists, HashMap<DiscreteRating, SimplifiedPlaylist>, {
     playlists
 }, RATING_PLAYLISTS);
 
-refreshing!(ratings, HashMap<DiscreteRating, Vec<PlaylistItem>>, {
+struct Analyzation {
+    canonical_rating: f32,
+    rating_history: Vec<(UtcDateTime, f32)>,
+}
+
+refreshing!(ratings, HashMap<FullTrack, Analyzation>, {
     let spotify = spotify().await;
     let playlists = rating_playlists().await;
     let mut ratings = HashMap::new();
 
     for (rating, playlist) in playlists {
-        let items = spotify
+        spotify
             .playlist_items(playlist.id, None, None)
-            .filter_map(|result| async move {
-                result.ok()
+            .for_each(|result| async move {
+                match result {
+                   Ok(PlaylistItem {
+                       added_at: Some(added_at),
+                       track: Some(PlayableItem::Track(track)),
+                       ..
+                   }) =>  {},
+                   _ => {},
+                }
             })
-            .collect::<Vec<_>>()
             .await;
-        ratings.insert(rating, items);
     }
 
     ratings
