@@ -5,16 +5,16 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
 };
 
-use crate::ratings::analyze::{canonical_rating, AnalyzedData};
+use crate::ratings::analyze::{AnalyzedData, canonical_rating};
 #[cfg(feature = "server")]
 use charming::{
+    Chart, HtmlRenderer,
     component::{Axis, Title},
     datatype::CompositeValue,
     element::{
         AreaStyle, AxisType, Color, ColorStop, Formatter, JsFunction, LineStyle, Tooltip, Trigger,
     },
     series::Line,
-    Chart, HtmlRenderer,
 };
 use time::{Date, UtcDateTime};
 

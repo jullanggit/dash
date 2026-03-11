@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use time::{format_description::well_known::Rfc3339, Duration, UtcDateTime};
+use time::{Duration, UtcDateTime, format_description::well_known::Rfc3339};
 
 use crate::ratings::types::Data;
 
