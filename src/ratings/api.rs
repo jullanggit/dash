@@ -56,10 +56,14 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
 macro_rules! refreshing {
     ($fn_name:ident, $return:ty, $body:block, $const:ident) => {
         static $const: RwLock<Option<$return>> = RwLock::const_new(None);
-        static ${ concat($const, _LAST_FETCH) }: AtomicI64 = AtomicI64::new(0);
+        static ${ concat($const, _LAST_FETCH) }: AtomicI64 = AtomicI64::new(0); // initialize to zero so the first access is always identified as after it
 
         pub async fn $fn_name() -> $return {
+            use tokio::time::sleep;
+
             let now = UtcDateTime::now();
+
+            let read_clone = async || -> Option<$return> { $const.read().await.clone() };
 
             let last_fetched = ${ concat($const, _LAST_FETCH) }.load(Ordering::Relaxed);
             if (now - Duration::minutes(1)).unix_timestamp() > last_fetched
@@ -71,21 +75,29 @@ macro_rules! refreshing {
                         Ordering::Relaxed,
                     )
                     .is_ok()
-                || $const.read().await.is_none()
             {
-                let new_value = $body;
-
-                let clone = new_value.clone();
-                tokio::spawn(async move { *$const.write().await = Some(clone); }); // update in the background
-
-                new_value
+                match read_clone().await {
+                    // update asynchronously, return old value
+                    Some(value) => {
+                        tokio::spawn(async move { *$const.write().await = Some($body); });
+                        value
+                    }
+                    // update synchronously, return value
+                    None => {
+                        let new_value = $body;
+                        *$const.write().await = Some(new_value.clone());
+                        new_value
+                    }
+                }
+            // up-to-date, or being initialized/updated by another thread
             } else {
-                $const
-                    .read()
-                    .await
-                    .as_ref()
-                    .expect("We check hashmap being present above")
-                    .clone()
+                loop {
+                    if let Some(value) = read_clone().await {
+                        return value;
+                    }
+
+                    sleep(tokio::time::Duration::from_millis(100)).await;
+                }
             }
         }
     };
