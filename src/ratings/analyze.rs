@@ -54,25 +54,25 @@ impl Data {
             analyzed
                 .rating_history
                 .sort_by_key(|(_, date_time)| *date_time);
-            analyzed.canonical_rating = canonical_rating(&analyzed.rating_history)
+            analyzed.canonical_rating = canonical_rating(analyzed.rating_history.iter().cloned())
         }
 
         out
     }
 }
 
-pub fn canonical_rating(rating_history: &[(f32, UtcDateTime)]) -> f32 {
+pub fn canonical_rating(rating_history: impl IntoIterator<Item = (f32, UtcDateTime)>) -> f32 {
     const HALF_LIFE: Duration = Duration::weeks(26);
 
     let now = UtcDateTime::now();
     let (weighted_sum, weight_sum) =
         rating_history
-            .iter()
+            .into_iter()
             .fold((0., 0.), |(weighted_sum, weight_sum), (rating, time)| {
-                let delta = now - *time;
+                let delta = now - time;
                 let weight = 0.5_f64.powf(delta / HALF_LIFE) as f32;
 
-                (weighted_sum + *rating * weight, weight_sum + weight)
+                (weighted_sum + rating * weight, weight_sum + weight)
             });
 
     weighted_sum / weight_sum

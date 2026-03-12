@@ -17,6 +17,8 @@ use std::{
 use time::{Duration, UtcDateTime};
 use tokio::sync::RwLock;
 
+use crate::ratings::canonical_rating;
+
 static SPOTIFY: OnceLock<AuthCodeSpotify> = OnceLock::new();
 
 pub async fn spotify() -> &'static AuthCodeSpotify {
@@ -89,7 +91,7 @@ macro_rules! refreshing {
                 let new_value = $body;
 
                 let clone = new_value.clone();
-                tokio::spawn(async move { *$const.write().await = Some(clone) }); // update in the background
+                tokio::spawn(async move { *$const.write().await = Some(clone); }); // update in the background
 
                 new_value
             } else {
@@ -131,8 +133,8 @@ refreshing!(
 
 #[derive(Clone, Debug, Default)]
 struct Analyzation {
-    canonical_rating: f32,
     rating_history: Vec<(UtcDateTime, f32)>,
+    canonical_rating_history: Vec<(UtcDateTime, f32)>,
 }
 
 refreshing!(
@@ -170,7 +172,29 @@ refreshing!(
             }
         }
 
-        ratings
+        analyze(ratings)
     },
     RATINGS
 );
+
+/// Build analyzation based on track and rating history
+fn analyze(mut ratings: Vec<(FullTrack, Analyzation)>) -> Vec<(FullTrack, Analyzation)> {
+    for (_, analyzation) in &mut ratings {
+        analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
+            .map(|i| {
+                (
+                    analyzation.rating_history[i].0,
+                    canonical_rating(
+                        analyzation
+                            .rating_history
+                            .iter()
+                            .take(i)
+                            .map(|&(time, rating)| (rating, time)),
+                    ),
+                )
+            })
+            .collect();
+    }
+
+    ratings
+}

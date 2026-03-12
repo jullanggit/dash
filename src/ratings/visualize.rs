@@ -169,7 +169,7 @@ pub fn song_canonical_rating_histories(data: &AnalyzedData) -> Chart {
                     .map(|i| {
                         (
                             analyzed.rating_history[i].1,
-                            canonical_rating(&analyzed.rating_history[0..=i]),
+                            canonical_rating(analyzed.rating_history[0..=i].iter().cloned()),
                         )
                     })
                     .chain(std::iter::once((now, analyzed.canonical_rating))) // ensure all lines go to the end
