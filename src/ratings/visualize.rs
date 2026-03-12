@@ -93,7 +93,9 @@ pub fn average_rating_per_day(data: &Analyzation) -> Chart {
                 .data(
                     data.average_rating_per_day
                         .iter()
-                        .map(|&(date, value)| vec![date.to_string(), value.into])
+                        .map(|&(date, value)| {
+                            vec![CompositeValue::from(date.to_string()), value.into()]
+                        })
                         .collect(),
                 ),
         )

@@ -1,4 +1,7 @@
-use crate::{config::Config, ratings::Data};
+use crate::{
+    config::Config,
+    ratings::{Data, ratings},
+};
 use dioxus::prelude::*;
 
 #[component]
@@ -33,11 +36,9 @@ async fn charts() -> Result<[String; 4]> {
 
     let config = config().await;
 
-    let json = tokio::fs::read_to_string(config.spotify.export_json_path).await?;
-    let raw_data: Data = serde_json::from_str(&json)?;
-    let analyzed_data = raw_data.analyze();
-
     let renderer = HtmlRenderer::new("Renderer", 1920, 1080);
+
+    let analyzation = ratings().await;
 
     Ok([
         canonical_rating_distribution,
@@ -46,7 +47,7 @@ async fn charts() -> Result<[String; 4]> {
         song_canonical_rating_histories,
     ]
     .map(|f| {
-        let chart = f(&analyzed_data);
+        let chart = f(&analyzation);
         renderer
             .render(&chart)
             .expect("Rendering chart shouldn't fail")
