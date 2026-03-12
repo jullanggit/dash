@@ -131,15 +131,24 @@ refreshing!(
     RATING_PLAYLISTS
 );
 
+/// Contains all analyzations derived from `rating_history` and the providing track
 #[derive(Clone, Debug, Default)]
-struct Analyzation {
-    rating_history: Vec<(UtcDateTime, f32)>,
-    canonical_rating_history: Vec<(UtcDateTime, f32)>,
+pub struct TrackAnalyzation {
+    pub rating_history: Vec<(UtcDateTime, f32)>,
+    pub canonical_rating_history: Vec<(UtcDateTime, f32)>,
+    pub canonical_rating: f32,
 }
+
+#[derive(Clone, Debug)]
+pub struct Analyzation {
+    pub tracks: AnalyzedTracks,
+}
+
+pub type AnalyzedTracks = Vec<(FullTrack, TrackAnalyzation)>;
 
 refreshing!(
     ratings,
-    Vec<(FullTrack, Analyzation)>,
+    Analyzation,
     {
         let spotify = spotify().await;
         let playlists = rating_playlists().await;
@@ -159,7 +168,9 @@ refreshing!(
                                 (*s_track == track).then_some(analyzation)
                             }) {
                                 Some(ratings) => ratings,
-                                None => &mut ratings.push_mut((track, Analyzation::default())).1,
+                                None => {
+                                    &mut ratings.push_mut((track, TrackAnalyzation::default())).1
+                                }
                             };
 
                         entry.rating_history.push((
@@ -177,9 +188,9 @@ refreshing!(
     RATINGS
 );
 
-/// Build analyzation based on track and rating history
-fn analyze(mut ratings: Vec<(FullTrack, Analyzation)>) -> Vec<(FullTrack, Analyzation)> {
-    for (_, analyzation) in &mut ratings {
+/// Build analyzation based on tracks and rating histories
+fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
+    for (_, analyzation) in &mut tracks {
         analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
             .map(|i| {
                 (
@@ -194,7 +205,12 @@ fn analyze(mut ratings: Vec<(FullTrack, Analyzation)>) -> Vec<(FullTrack, Analyz
                 )
             })
             .collect();
+        analyzation.canonical_rating = analyzation
+            .canonical_rating_history
+            .last()
+            .map(|(_, rating)| *rating)
+            .unwrap_or(2.5); // TODO: make default rating configurable
     }
 
-    ratings
+    Analyzation { tracks }
 }
