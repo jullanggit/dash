@@ -5,6 +5,8 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
 };
 
+#[cfg(feature = "server")]
+use crate::ratings::Analyzation;
 use crate::ratings::analyze::{AnalyzedData, canonical_rating};
 #[cfg(feature = "server")]
 use charming::{
@@ -34,22 +36,38 @@ pub fn rating_per_song(data: AnalyzedData) {
 }
 
 #[cfg(feature = "server")]
-pub fn canonical_rating_distribution(data: &AnalyzedData) -> Chart {
-    let mut ratings = [0; 21];
-    for rating in data
-        .songs
-        .iter()
-        .flat_map(|(_, data)| data.rating_history.iter().map(|(rating, _)| *rating))
+pub fn canonical_rating_distribution(data: Analyzation) -> Chart {
+    use crate::ratings::TrackAnalyzation;
+
+    const BIN_SIZE: f32 = 0.25;
+    const NUM_BINS: usize = (5. / BIN_SIZE) as usize;
+    let mut bins = [0_i64; NUM_BINS];
+
+    for (
+        _,
+        TrackAnalyzation {
+            canonical_rating, ..
+        },
+    ) in data.tracks
     {
-        ratings[(rating * 4.) as usize] += 1;
+        let bin_index = ((canonical_rating / BIN_SIZE) as usize).min(NUM_BINS - 1);
+        bins[bin_index] += 1;
     }
 
     // chart
     base_chart()
         .title(Title::new().text("Canonical Rating Distribution"))
-        .x_axis(Axis::new().type_(AxisType::Category).data(Vec::from_iter(
-            (0..=20).map(|num| (num as f32 / 4.).to_string()),
-        )))
+        .x_axis(
+            Axis::new()
+                .type_(AxisType::Category)
+                .data(Vec::from_iter((0..NUM_BINS).map(|num| {
+                    format!(
+                        "{:.2}-{:.2}",
+                        num as f32 * BIN_SIZE,
+                        (num + 1) as f32 * BIN_SIZE
+                    )
+                }))),
+        )
         .y_axis(Axis::new().type_(AxisType::Value))
         .series(
             Line::new()
@@ -57,7 +75,7 @@ pub fn canonical_rating_distribution(data: &AnalyzedData) -> Chart {
                 .line_style(LineStyle::new().width(0.0))
                 .area_style(AreaStyle::new().color(linear_gradient()).opacity(0.8))
                 .smooth(true)
-                .data(ratings.to_vec()),
+                .data(bins.to_vec()),
         )
 }
 
