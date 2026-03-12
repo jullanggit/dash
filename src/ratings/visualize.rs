@@ -3,9 +3,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
 };
 
-#[cfg(feature = "server")]
 use crate::ratings::Analyzation;
-#[cfg(feature = "server")]
 use charming::{
     Chart,
     component::{Axis, Title},
@@ -34,7 +32,6 @@ pub fn rating_per_song(data: Analyzation) {
     }
 }
 
-#[cfg(feature = "server")]
 pub fn canonical_rating_distribution(data: &Analyzation) -> Chart {
     use crate::ratings::TrackAnalyzation;
 
@@ -78,7 +75,6 @@ pub fn canonical_rating_distribution(data: &Analyzation) -> Chart {
         )
 }
 
-#[cfg(feature = "server")]
 pub fn average_rating_per_day(data: &Analyzation) -> Chart {
     base_chart()
         .title(Title::new().text("Average Rating per Day"))
@@ -101,7 +97,6 @@ pub fn average_rating_per_day(data: &Analyzation) -> Chart {
 }
 
 // TODO: make sure lines go to the end with new analyzations
-#[cfg(feature = "server")]
 pub fn num_ratings_history(data: &Analyzation) -> Chart {
     let convert = |&(date_time, count)| (date_time, count as i64);
     base_chart()
@@ -135,7 +130,6 @@ pub fn num_ratings_history(data: &Analyzation) -> Chart {
         )
 }
 
-#[cfg(feature = "server")]
 pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
     use charming::element::{Formatter, JsFunction, Tooltip, Trigger};
 
@@ -194,7 +188,6 @@ pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
     chart
 }
 
-#[cfg(feature = "server")]
 fn linear_gradient() -> Color {
     Color::LinearGradient {
         x: 0.0,
@@ -208,7 +201,6 @@ fn linear_gradient() -> Color {
     }
 }
 
-#[cfg(feature = "server")]
 fn linear_gradient2() -> Color {
     Color::LinearGradient {
         x: 0.0,
@@ -222,7 +214,6 @@ fn linear_gradient2() -> Color {
     }
 }
 
-#[cfg(feature = "server")]
 fn to_composite_values(
     (time, value): (UtcDateTime, impl Into<CompositeValue>),
 ) -> Vec<CompositeValue> {
@@ -232,7 +223,6 @@ fn to_composite_values(
     ]
 }
 
-#[cfg(feature = "server")]
 pub fn base_chart() -> Chart {
     use charming::component::{Feature, Toolbox, ToolboxDataZoom};
 

@@ -1,4 +1,3 @@
-use crate::ratings::ratings;
 use dioxus::prelude::*;
 
 #[component]
@@ -23,9 +22,10 @@ pub fn Spotify() -> Element {
 #[server]
 async fn charts() -> Result<[String; 4]> {
     use crate::ratings::{
-        average_rating_per_day, canonical_rating_distribution, num_ratings_history,
+        average_rating_per_day, canonical_rating_distribution, num_ratings_history, ratings,
         song_canonical_rating_histories,
     };
+
     use charming::HtmlRenderer;
 
     let renderer = HtmlRenderer::new("Renderer", 1920, 1080);

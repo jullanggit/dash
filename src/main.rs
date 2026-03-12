@@ -8,6 +8,7 @@ use views::{Home, Navbar, Spotify};
 /// Define a components module that contains all shared components for our app.
 mod components;
 mod config;
+#[cfg(feature = "server")]
 mod ratings;
 /// Define a views module that contains the UI for all Layouts and Routes for our app.
 mod views;
