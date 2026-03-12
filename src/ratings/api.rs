@@ -5,15 +5,17 @@ use rspotify::{
     prelude::{BaseClient, OAuthClient},
     scopes,
 };
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
+    env::home_dir,
     sync::{
         OnceLock,
         atomic::{AtomicI64, Ordering},
     },
 };
 use time::{Date, Duration, UtcDateTime};
-use tokio::sync::RwLock;
+use tokio::{fs, sync::RwLock};
 
 static SPOTIFY: OnceLock<AuthCodeSpotify> = OnceLock::new();
 
@@ -78,17 +80,42 @@ macro_rules! refreshing {
                     )
                     .is_ok()
             {
+                let cache_path = home_dir().map(|mut path| {
+                    path.push(format!(".cache/dash/{}.json", stringify!($fn_name)));
+                    path
+                });
+
+                let clone = cache_path.clone();
+
+                let write = async move |value: $return| *$const.write().await = Some(value.clone());
+                let write_with_cache = async move |value: $return| {
+                    write(value.clone()).await;
+                    let path = clone?;
+                    fs::create_dir_all(path.parent()?).await.ok()?;
+                    fs::write(path, serde_json::to_string(&value).ok()?).await.ok()
+                };
+
                 match read_clone().await {
                     // update asynchronously, return old value
                     Some(value) => {
-                        tokio::spawn(async move { *$const.write().await = Some($body); });
+                        tokio::spawn(async move { write_with_cache($body).await; });
                         value
                     }
-                    // update synchronously, return value
                     None => {
-                        let new_value = $body;
-                        *$const.write().await = Some(new_value.clone());
-                        new_value
+                        let get_cached = async || serde_json::from_str(&fs::read_to_string(cache_path.clone()?).await.ok()?).ok();
+                        match get_cached().await {
+                            // update asynchronously, return cached value
+                            Some(cached) => {
+                                tokio::spawn(async move { write($body).await; });
+                                cached
+                            }
+                            // update synchronously, return new value once its available
+                            None => {
+                                let new_value = $body;
+                                write_with_cache(new_value.clone()).await;
+                                new_value
+                            }
+                        }
                     }
                 }
             // up-to-date, or being initialized/updated by another thread
@@ -104,7 +131,6 @@ macro_rules! refreshing {
         }
     };
 }
-
 refreshing!(
     rating_playlists,
     Vec<(f32, SimplifiedPlaylist)>,
@@ -133,7 +159,7 @@ refreshing!(
 );
 
 /// Contains all analyzations derived from `rating_history` and the providing track
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TrackAnalyzation {
     /// sorted by ascending date
     pub rating_history: Vec<(UtcDateTime, f32)>,
@@ -141,7 +167,7 @@ pub struct TrackAnalyzation {
     pub canonical_rating: f32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Analyzation {
     pub tracks: AnalyzedTracks,
     /// sorted by ascending date
