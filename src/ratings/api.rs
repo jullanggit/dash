@@ -198,7 +198,7 @@ fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
         analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
             .map(|i| {
                 (
-                    analyzation.rating_history[i].0,
+                    analyzation.rating_history[i - 1].0,
                     canonical_rating(
                         analyzation
                             .rating_history
