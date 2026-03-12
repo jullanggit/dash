@@ -19,6 +19,8 @@ static SPOTIFY: OnceLock<AuthCodeSpotify> = OnceLock::new();
 
 // TODO: read credentials from config file (possibly with indirection for secrets) instead form .env
 pub async fn spotify() -> &'static AuthCodeSpotify {
+    println!("Getting spotify");
+
     match SPOTIFY.get() {
         Some(spotify) => spotify,
         None => {
@@ -110,6 +112,8 @@ refreshing!(
         let spotify = spotify().await;
         let mut playlists = Vec::new();
 
+        println!("Getting rating playlists");
+
         let mut stream = spotify.current_user_playlists();
         while let Some(playlist) = stream.next().await {
             if let Ok(playlist) = playlist
@@ -156,6 +160,8 @@ refreshing!(
         let playlists = rating_playlists().await;
         let mut ratings = Vec::new();
 
+        println!("Getting ratings");
+
         for (rating, playlist) in playlists {
             let mut stream = spotify.playlist_items(playlist.id, None, None);
             while let Some(item) = stream.next().await {
@@ -189,6 +195,8 @@ refreshing!(
 
 /// Build analyzation based on tracks and rating histories
 fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
+    println!("Analyzing ratings");
+
     fn canonical_rating(rating_history: impl IntoIterator<Item = (f32, UtcDateTime)>) -> f32 {
         const HALF_LIFE: Duration = Duration::weeks(26);
 
