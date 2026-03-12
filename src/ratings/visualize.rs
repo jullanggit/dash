@@ -1,28 +1,27 @@
 use std::{
     array,
-    collections::{BTreeMap, HashMap},
-    fs::create_dir_all,
     hash::{DefaultHasher, Hash, Hasher},
 };
 
 #[cfg(feature = "server")]
 use crate::ratings::Analyzation;
-use crate::ratings::analyze::{AnalyzedData, canonical_rating};
 #[cfg(feature = "server")]
 use charming::{
-    Chart, HtmlRenderer,
+    Chart,
     component::{Axis, Title},
     datatype::CompositeValue,
     element::{
-        AreaStyle, AxisType, Color, ColorStop, Formatter, JsFunction, LineStyle, Tooltip, Trigger,
+        AreaStyle, AxisType, Color, ColorStop, Formatter, ItemStyle, JsFunction, LineStyle,
+        Tooltip, Trigger,
     },
     series::Line,
 };
-use time::{Date, UtcDateTime};
 
-pub fn rating_per_song(data: AnalyzedData) {
+use time::UtcDateTime;
+
+pub fn rating_per_song(data: Analyzation) {
     let mut vec = data
-        .songs
+        .tracks
         .iter()
         .map(|(song, analyzed)| (&song.name, analyzed.canonical_rating))
         .collect::<Vec<_>>();
@@ -169,8 +168,6 @@ pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
                                                            // ))),
                 ),
             |chart, (track, history)| {
-                use charming::element::{Formatter, ItemStyle, Symbol, Tooltip, Trigger};
-
                 track.name.hash(&mut hasher);
                 let hash: u64 = hasher.finish();
                 let [r, g, b] = array::from_fn(|i| ((hash >> (i * 8)) & 0xFF) as u8);

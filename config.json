@@ -2,9 +2,6 @@
   "mimir": {
     "url": "localhost:3001/mimir"
   },
-  "spotify": {
-    "exportJsonPath": "/home/julius/Downloads/ratings-export.json"
-  },
   "dashboards": [
     {
       "name": "Device Metrics",

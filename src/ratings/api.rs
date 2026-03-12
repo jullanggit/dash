@@ -1,5 +1,4 @@
-use dioxus::fullstack::get_server_url;
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use rspotify::{
     AuthCodeSpotify, Config, Credentials, OAuth,
     model::{FullTrack, PlayableItem, PlaylistItem, SimplifiedPlaylist},
@@ -7,20 +6,18 @@ use rspotify::{
     scopes,
 };
 use std::{
-    collections::{BTreeMap, HashMap},
-    convert::identity,
+    collections::BTreeMap,
     sync::{
         OnceLock,
-        atomic::{AtomicI64, AtomicU64, Ordering},
+        atomic::{AtomicI64, Ordering},
     },
 };
 use time::{Date, Duration, UtcDateTime};
 use tokio::sync::RwLock;
 
-use crate::ratings::canonical_rating;
-
 static SPOTIFY: OnceLock<AuthCodeSpotify> = OnceLock::new();
 
+// TODO: read credentials from config file (possibly with indirection for secrets) instead form .env
 pub async fn spotify() -> &'static AuthCodeSpotify {
     match SPOTIFY.get() {
         Some(spotify) => spotify,
@@ -53,18 +50,6 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
 
             SPOTIFY.get_or_init(|| spotify)
         }
-    }
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DiscreteRating(pub u8);
-impl DiscreteRating {
-    const FACTOR: f32 = 4.0;
-    pub fn from_float(float: f32) -> Self {
-        Self((float * Self::FACTOR) as u8)
-    }
-    pub fn to_float(self) -> f32 {
-        (self.0 as f32) / Self::FACTOR
     }
 }
 
@@ -191,6 +176,23 @@ refreshing!(
 
 /// Build analyzation based on tracks and rating histories
 fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
+    fn canonical_rating(rating_history: impl IntoIterator<Item = (f32, UtcDateTime)>) -> f32 {
+        const HALF_LIFE: Duration = Duration::weeks(26);
+
+        let now = UtcDateTime::now();
+        let (weighted_sum, weight_sum) = rating_history.into_iter().fold(
+            (0., 0.),
+            |(weighted_sum, weight_sum), (rating, time)| {
+                let delta = now - time;
+                let weight = 0.5_f64.powf(delta / HALF_LIFE) as f32;
+
+                (weighted_sum + rating * weight, weight_sum + weight)
+            },
+        );
+
+        weighted_sum / weight_sum
+    }
+
     // track analyzations
     for (_, analyzation) in &mut tracks {
         analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())

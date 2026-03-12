@@ -1,14 +1,9 @@
 #![feature(macro_metavar_expr_concat)]
 
-use std::{env, fs};
-
 // The dioxus prelude contains a ton of common items used in dioxus apps. It's a good idea to import wherever you
 // need dioxus
 use dioxus::prelude::*;
-
 use views::{Home, Navbar, Spotify};
-
-use crate::config::Config;
 
 /// Define a components module that contains all shared components for our app.
 mod components;

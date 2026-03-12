@@ -1,5 +1,4 @@
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use serde::Deserialize;
 
 #[cfg(feature = "server")]
 pub async fn config() -> Config {
@@ -17,9 +16,6 @@ structstruck::strike!(
     pub struct Config {
       pub mimir: struct {
         pub url: String,
-      },
-      pub spotify: struct {
-        pub export_json_path: PathBuf,
       },
       pub dashboards: Vec<struct Dashboard {
         pub name: String,

@@ -1,7 +1,4 @@
-use crate::{
-    config::Config,
-    ratings::{Data, ratings},
-};
+use crate::ratings::ratings;
 use dioxus::prelude::*;
 
 #[component]
@@ -12,7 +9,7 @@ pub fn Spotify() -> Element {
         match &*charts.read_unchecked() {
             Some(Ok(charts)) => {
                 rsx! {
-                    for (i , chart) in charts.iter().enumerate() {
+                    for chart in charts {
                         iframe { width: 1920, height: 1080, srcdoc: "{chart}" }
                     }
                 }
@@ -25,16 +22,11 @@ pub fn Spotify() -> Element {
 
 #[server]
 async fn charts() -> Result<[String; 4]> {
-    use crate::{
-        config::config,
-        ratings::{
-            average_rating_per_day, canonical_rating_distribution, num_ratings_history,
-            song_canonical_rating_histories,
-        },
+    use crate::ratings::{
+        average_rating_per_day, canonical_rating_distribution, num_ratings_history,
+        song_canonical_rating_histories,
     };
     use charming::HtmlRenderer;
-
-    let config = config().await;
 
     let renderer = HtmlRenderer::new("Renderer", 1920, 1080);
 
