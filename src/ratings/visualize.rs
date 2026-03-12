@@ -99,34 +99,10 @@ pub fn average_rating_per_day(data: &Analyzation) -> Chart {
         )
 }
 
+// TODO: make sure lines go to the end with new analyzations
 #[cfg(feature = "server")]
-pub fn num_ratings_history(data: &AnalyzedData) -> Chart {
-    let mut rating_times = data
-        .songs
-        .iter()
-        .flat_map(|(_, data)| data.rating_history.iter().map(|(_, time)| time))
-        .collect::<Vec<_>>();
-    rating_times.sort_unstable();
-
-    let mut first_rating_times = data
-        .songs
-        .iter()
-        .filter_map(|(_, data)| data.rating_history.iter().map(|(_, time)| time).min())
-        .collect::<Vec<_>>();
-    first_rating_times.sort_unstable();
-
-    let history = |times: Vec<&UtcDateTime>| {
-        times
-            .iter()
-            .enumerate()
-            .chain(times.last().map(|time| (times.len(), time))) // ensure lines go to the end
-            .map(|(num, time)| (**time, num as i64))
-            .map(to_composite_values)
-            .collect()
-    };
-    let num_ratings_history = history(rating_times);
-    let num_first_ratings_history = history(first_rating_times);
-
+pub fn num_ratings_history(data: &Analyzation) -> Chart {
+    let convert = |&(date_time, count)| (date_time, count as i64);
     base_chart()
         .title(Title::new().text("Num Ratings"))
         .x_axis(Axis::new().type_(AxisType::Time))
@@ -146,7 +122,7 @@ pub fn num_ratings_history(data: &AnalyzedData) -> Chart {
                 .show_symbol(false)
                 .line_style(LineStyle::new().color(linear_gradient()))
                 .smooth(true)
-                .data(num_ratings_history),
+                .data(data.num_ratings_history.iter().map(convert).map(to_composite_values).collect()),
         )
         .series(
             Line::new()
@@ -154,7 +130,7 @@ pub fn num_ratings_history(data: &AnalyzedData) -> Chart {
                 .show_symbol(false)
                 .line_style(LineStyle::new().color(linear_gradient2()))
                 .smooth(true)
-                .data(num_first_ratings_history),
+                .data(data.num_rated_tracks_history.iter().map(convert).map(to_composite_values).collect()),
         )
 }
 

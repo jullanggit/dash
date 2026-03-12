@@ -144,6 +144,8 @@ pub struct Analyzation {
     pub tracks: AnalyzedTracks,
     /// sorted by ascending date
     pub average_rating_per_day: Vec<(Date, f32)>,
+    pub num_ratings_history: Vec<(UtcDateTime, u32)>,
+    pub num_rated_tracks_history: Vec<(UtcDateTime, u32)>,
 }
 
 pub type AnalyzedTracks = Vec<(FullTrack, TrackAnalyzation)>;
@@ -233,8 +235,33 @@ fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
             .collect()
     };
 
+    let (num_ratings_history, num_rated_tracks_history) = {
+        let rating_times = tracks
+            .iter()
+            .flat_map(|(_, data)| data.rating_history.iter().map(|(time, _)| time))
+            .collect::<Vec<_>>();
+
+        let first_rating_times = tracks
+            .iter()
+            .filter_map(|(_, data)| data.rating_history.iter().map(|(time, _)| time).min())
+            .collect::<Vec<_>>();
+
+        let history = |mut times: Vec<&UtcDateTime>| {
+            times.sort_unstable();
+            times
+                .iter()
+                .enumerate()
+                .map(|(count, &&date_time)| (date_time, count as u32))
+                .collect()
+        };
+
+        (history(rating_times), history(first_rating_times))
+    };
+
     Analyzation {
         tracks,
         average_rating_per_day,
+        num_ratings_history,
+        num_rated_tracks_history,
     }
 }
