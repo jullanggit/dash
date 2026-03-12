@@ -53,17 +53,9 @@ pub fn canonical_rating_distribution(data: &Analyzation) -> Chart {
     // chart
     base_chart()
         .title(Title::new().text("Canonical Rating Distribution"))
-        .x_axis(
-            Axis::new()
-                .type_(AxisType::Category)
-                .data(Vec::from_iter((0..NUM_BINS).map(|num| {
-                    format!(
-                        "{:.2}-{:.2}",
-                        num as f32 * BIN_SIZE,
-                        (num + 1) as f32 * BIN_SIZE
-                    )
-                }))),
-        )
+        .x_axis(Axis::new().type_(AxisType::Category).data(Vec::from_iter(
+            (0..NUM_BINS).map(|num| format!("{:.2}-", num as f32 * BIN_SIZE,)),
+        )))
         .y_axis(Axis::new().type_(AxisType::Value))
         .series(
             Line::new()
