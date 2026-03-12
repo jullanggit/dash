@@ -7,14 +7,14 @@ use rspotify::{
     scopes,
 };
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     convert::identity,
     sync::{
         OnceLock,
         atomic::{AtomicI64, AtomicU64, Ordering},
     },
 };
-use time::{Duration, UtcDateTime};
+use time::{Date, Duration, UtcDateTime};
 use tokio::sync::RwLock;
 
 use crate::ratings::canonical_rating;
@@ -142,6 +142,8 @@ pub struct TrackAnalyzation {
 #[derive(Clone, Debug)]
 pub struct Analyzation {
     pub tracks: AnalyzedTracks,
+    /// sorted by ascending date
+    pub average_rating_per_day: Vec<(Date, f32)>,
 }
 
 pub type AnalyzedTracks = Vec<(FullTrack, TrackAnalyzation)>;
@@ -163,15 +165,12 @@ refreshing!(
                         track: Some(PlayableItem::Track(track)),
                         ..
                     }) => {
-                        let mut entry =
-                            match ratings.iter_mut().find_map(|(s_track, analyzation)| {
-                                (*s_track == track).then_some(analyzation)
-                            }) {
-                                Some(ratings) => ratings,
-                                None => {
-                                    &mut ratings.push_mut((track, TrackAnalyzation::default())).1
-                                }
-                            };
+                        let entry = match ratings.iter_mut().find_map(|(s_track, analyzation)| {
+                            (*s_track == track).then_some(analyzation)
+                        }) {
+                            Some(ratings) => ratings,
+                            None => &mut ratings.push_mut((track, TrackAnalyzation::default())).1,
+                        };
 
                         entry.rating_history.push((
                             UtcDateTime::from_unix_timestamp(added_at.timestamp()).unwrap(),
@@ -190,6 +189,7 @@ refreshing!(
 
 /// Build analyzation based on tracks and rating histories
 fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
+    // track analyzations
     for (_, analyzation) in &mut tracks {
         analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
             .map(|i| {
@@ -212,5 +212,29 @@ fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
             .unwrap_or(2.5); // TODO: make default rating configurable
     }
 
-    Analyzation { tracks }
+    // cross-track analyzations
+    let average_rating_per_day = {
+        let ratings_per_day: BTreeMap<Date, Vec<f32>> = tracks
+            .iter()
+            .flat_map(|(_, track_analyzation)| track_analyzation.rating_history.iter())
+            .fold(BTreeMap::new(), |mut acc, (date_time, rating)| {
+                let date = date_time.date();
+                acc.entry(date).or_default().push(*rating);
+                acc
+            });
+
+        ratings_per_day
+            .iter()
+            .map(|(&date, ratings)| {
+                let average_rating =
+                    ratings.iter().map(f32::clone).sum::<f32>() / ratings.len() as f32;
+                (date, average_rating)
+            })
+            .collect()
+    };
+
+    Analyzation {
+        tracks,
+        average_rating_per_day,
+    }
 }

@@ -36,7 +36,7 @@ pub fn rating_per_song(data: AnalyzedData) {
 }
 
 #[cfg(feature = "server")]
-pub fn canonical_rating_distribution(data: Analyzation) -> Chart {
+pub fn canonical_rating_distribution(data: &Analyzation) -> Chart {
     use crate::ratings::TrackAnalyzation;
 
     const BIN_SIZE: f32 = 0.25;
@@ -48,9 +48,9 @@ pub fn canonical_rating_distribution(data: Analyzation) -> Chart {
         TrackAnalyzation {
             canonical_rating, ..
         },
-    ) in data.tracks
+    ) in &data.tracks
     {
-        let bin_index = ((canonical_rating / BIN_SIZE) as usize).min(NUM_BINS - 1);
+        let bin_index = ((*canonical_rating / BIN_SIZE) as usize).min(NUM_BINS - 1);
         bins[bin_index] += 1;
     }
 
@@ -80,25 +80,7 @@ pub fn canonical_rating_distribution(data: Analyzation) -> Chart {
 }
 
 #[cfg(feature = "server")]
-pub fn average_rating_per_day(data: &AnalyzedData) -> Chart {
-    let ratings_per_day: BTreeMap<Date, Vec<f32>> = data
-        .songs
-        .iter()
-        .flat_map(|(_, data)| data.rating_history.iter())
-        .fold(BTreeMap::new(), |mut acc, (rating, date_time)| {
-            let date = date_time.date();
-            acc.entry(date).or_default().push(*rating);
-            acc
-        });
-
-    let average_rating_per_day: Vec<Vec<CompositeValue>> = ratings_per_day
-        .iter()
-        .map(|(date, ratings)| {
-            let average_rating = ratings.iter().map(f32::clone).sum::<f32>() / ratings.len() as f32;
-            vec![date.to_string().into(), average_rating.into()]
-        })
-        .collect();
-
+pub fn average_rating_per_day(data: &Analyzation) -> Chart {
     base_chart()
         .title(Title::new().text("Average Rating per Day"))
         .x_axis(Axis::new().type_(AxisType::Time))
@@ -108,7 +90,12 @@ pub fn average_rating_per_day(data: &AnalyzedData) -> Chart {
                 .show_symbol(false)
                 .line_style(LineStyle::new().color(linear_gradient()))
                 .smooth(true)
-                .data(average_rating_per_day),
+                .data(
+                    data.average_rating_per_day
+                        .iter()
+                        .map(|&(date, value)| vec![date.to_string(), value.into])
+                        .collect(),
+                ),
         )
 }
 
