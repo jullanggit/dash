@@ -135,24 +135,21 @@ pub fn num_ratings_history(data: &Analyzation) -> Chart {
 }
 
 #[cfg(feature = "server")]
-pub fn song_canonical_rating_histories(data: &AnalyzedData) -> Chart {
+pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
     use charming::element::{Formatter, JsFunction, Tooltip, Trigger};
 
     let now = UtcDateTime::now();
     let mut hasher = DefaultHasher::new();
     let chart = data
-        .songs
+        .tracks
         .iter()
         .map(|(song, analyzed)| {
             (
                 song,
-                (0..analyzed.rating_history.len())
-                    .map(|i| {
-                        (
-                            analyzed.rating_history[i].1,
-                            canonical_rating(analyzed.rating_history[0..=i].iter().cloned()),
-                        )
-                    })
+                analyzed
+                    .canonical_rating_history
+                    .iter()
+                    .cloned()
                     .chain(std::iter::once((now, analyzed.canonical_rating))) // ensure all lines go to the end
                     .map(to_composite_values)
                     .collect::<Vec<Vec<CompositeValue>>>(),
@@ -169,17 +166,17 @@ pub fn song_canonical_rating_histories(data: &AnalyzedData) -> Chart {
                                                            //     "return params.map(p => p.seriesName).join('<br/>');",
                                                            // ))),
                 ),
-            |chart, data| {
+            |chart, (track, history)| {
                 use charming::element::{Formatter, ItemStyle, Symbol, Tooltip, Trigger};
 
-                data.0.name.hash(&mut hasher);
+                track.name.hash(&mut hasher);
                 let hash: u64 = hasher.finish();
                 let [r, g, b] = array::from_fn(|i| ((hash >> (i * 8)) & 0xFF) as u8);
                 let color = Color::Value(format!("rgb({r}, {g}, {b})"));
 
                 chart.series(
                     Line::new()
-                        .name(&data.0.name)
+                        .name(&track.name)
                         .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
                             Formatter::Function(JsFunction::new_with_args(
                                 "params",
@@ -190,7 +187,7 @@ pub fn song_canonical_rating_histories(data: &AnalyzedData) -> Chart {
                         .item_style(ItemStyle::new().color(color.clone()))
                         .line_style(LineStyle::new().color(color))
                         .smooth(true)
-                        .data(data.1),
+                        .data(history),
                 )
             },
         );
