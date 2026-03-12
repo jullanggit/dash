@@ -119,6 +119,7 @@ refreshing!(
 /// Contains all analyzations derived from `rating_history` and the providing track
 #[derive(Clone, Debug, Default)]
 pub struct TrackAnalyzation {
+    /// sorted by ascending date
     pub rating_history: Vec<(UtcDateTime, f32)>,
     pub canonical_rating_history: Vec<(UtcDateTime, f32)>,
     pub canonical_rating: f32,
@@ -195,6 +196,10 @@ fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
 
     // track analyzations
     for (_, analyzation) in &mut tracks {
+        analyzation
+            .rating_history
+            .sort_unstable_by_key(|&(time, _)| time);
+
         analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
             .map(|i| {
                 (
