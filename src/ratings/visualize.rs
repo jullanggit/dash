@@ -6,7 +6,7 @@ use std::{
 use crate::ratings::Analyzation;
 use charming::{
     Chart,
-    component::{Axis, Title},
+    component::{Axis, Legend, Title},
     datatype::CompositeValue,
     element::{
         AreaStyle, AxisType, Color, ColorStop, Formatter, ItemStyle, JsFunction, LineStyle,
@@ -214,6 +214,133 @@ pub fn popularity_canonical_rating_correlation(data: &Analyzation) -> Chart {
     )
 }
 
+pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
+    struct CorrelationSeries {
+        name: &'static str,
+        x_axis_name: &'static str,
+        color: &'static str,
+        points: Vec<(f32, f32, String)>,
+    }
+
+    let duration = CorrelationSeries {
+        name: "Duration (minutes)",
+        x_axis_name: "Duration (minutes)",
+        color: "rgb(59, 130, 246)",
+        points: data
+            .tracks
+            .iter()
+            .map(|(track, analyzed)| {
+                (
+                    (track.duration.num_milliseconds() as f32) / 60_000.0,
+                    analyzed.canonical_rating,
+                    track.name.clone(),
+                )
+            })
+            .collect(),
+    };
+
+    let popularity = CorrelationSeries {
+        name: "Popularity",
+        x_axis_name: "Popularity",
+        color: "rgb(16, 185, 129)",
+        points: data
+            .tracks
+            .iter()
+            .map(|(track, analyzed)| {
+                (
+                    track.popularity as f32,
+                    analyzed.canonical_rating,
+                    track.name.clone(),
+                )
+            })
+            .collect(),
+    };
+
+    let series = [duration, popularity]
+        .into_iter()
+        .map(|series| {
+            let regression = regression_line_with_correlation(&series.points);
+            let correlation = regression.map(|(_, _, correlation)| correlation);
+            let legend_label = match correlation {
+                Some(correlation) => format!("{} (r={correlation:.4})", series.name),
+                None => series.name.to_string(),
+            };
+            (series, regression, legend_label)
+        })
+        .collect::<Vec<_>>();
+
+    let mut chart = base_chart()
+        .title(Title::new().text("Canonical Rating Correlations"))
+        .tooltip(Tooltip::new().trigger(Trigger::Item))
+        .x_axis(Axis::new().type_(AxisType::Value).name(series[0].0.x_axis_name))
+        .x_axis(
+            Axis::new()
+                .type_(AxisType::Value)
+                .name(series[1].0.x_axis_name)
+                .position("top"),
+        )
+        .y_axis(
+            Axis::new()
+                .type_(AxisType::Value)
+                .name("Canonical Rating")
+                .min(0.0)
+                .max(5.0),
+        )
+        .legend(Legend::new().data(
+            series
+                .iter()
+                .map(|(_, _, label)| label.clone())
+                .collect::<Vec<_>>(),
+        ));
+
+    for (index, (series, regression, legend_label)) in series.into_iter().enumerate() {
+        let scatter_data = series
+            .points
+            .iter()
+            .map(|&(x, y, ref name)| vec![x.into(), y.into(), name.clone().into()])
+            .collect::<Vec<Vec<CompositeValue>>>();
+
+        chart = chart.series(
+            Line::new()
+                .name(&legend_label)
+                .show_symbol(true)
+                .line_style(LineStyle::new().width(0.0))
+                .item_style(ItemStyle::new().color(Color::Value(series.color.into())))
+                .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
+                    Formatter::Function(JsFunction::new_with_args(
+                        "params",
+                        &format!(
+                            "const [x, y, name] = params.data; return `${{name}}<br/>{}: ${{Number(x).toFixed(2)}}<br/>Canonical Rating: ${{Number(y).toFixed(2)}}`;",
+                            series.x_axis_name
+                        ),
+                    )),
+                ))
+                .x_axis_index(index as f64)
+                .data(scatter_data),
+        );
+
+        if let Some(((start_x, start_y), (end_x, end_y), _)) = regression {
+            chart = chart.series(
+                Line::new()
+                    .name(&legend_label)
+                    .show_symbol(false)
+                    .line_style(
+                        LineStyle::new()
+                            .color(Color::Value(series.color.into()))
+                            .width(2.0),
+                    )
+                    .x_axis_index(index as f64)
+                    .data(vec![
+                        vec![CompositeValue::from(start_x), CompositeValue::from(start_y)],
+                        vec![CompositeValue::from(end_x), CompositeValue::from(end_y)],
+                    ]),
+            );
+        }
+    }
+
+    chart
+}
+
 fn canonical_rating_correlation_chart(
     title: &str,
     x_axis_name: &str,
@@ -243,7 +370,10 @@ fn canonical_rating_correlation_chart(
                 .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
                     Formatter::Function(JsFunction::new_with_args(
                         "params",
-                        "const [x, y, name] = params.data; return `${name}<br/>x: ${Number(x).toFixed(2)}<br/>Canonical Rating: ${Number(y).toFixed(2)}`;",
+                        &format!(
+                            "const [x, y, name] = params.data; return `${{name}}<br/>{}: ${{Number(x).toFixed(2)}}<br/>Canonical Rating: ${{Number(y).toFixed(2)}}`;",
+                            x_axis_name
+                        ),
                     )),
                 ))
                 .data(scatter_data),

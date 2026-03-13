@@ -21,11 +21,10 @@ pub fn Spotify() -> Element {
 }
 
 #[server]
-async fn charts() -> Result<[String; 6]> {
+async fn charts() -> Result<[String; 5]> {
     use crate::ratings::{
         average_rating_per_day, canonical_rating_distribution,
-        duration_canonical_rating_correlation, num_ratings_history,
-        popularity_canonical_rating_correlation, ratings, song_canonical_rating_histories,
+        canonical_rating_correlations, num_ratings_history, ratings, song_canonical_rating_histories,
     };
 
     use charming::HtmlRenderer;
@@ -39,8 +38,7 @@ async fn charts() -> Result<[String; 6]> {
         average_rating_per_day,
         num_ratings_history,
         song_canonical_rating_histories,
-        duration_canonical_rating_correlation,
-        popularity_canonical_rating_correlation,
+        canonical_rating_correlations,
     ]
     .map(|f| {
         let chart = f(&analyzation);
