@@ -50,6 +50,7 @@
             eslint
             swc
             just
+            tombi
           ];
         };
       }

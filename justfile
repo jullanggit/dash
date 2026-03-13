@@ -11,3 +11,4 @@ serve:
 fmt:
 	cargo fmt
 	dx fmt
+	tombi fmt Cargo.toml
