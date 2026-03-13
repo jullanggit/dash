@@ -127,8 +127,7 @@ pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
 
     let now = UtcDateTime::now();
     let mut hasher = DefaultHasher::new();
-    let chart = data
-        .tracks
+    data.tracks
         .iter()
         .map(|(song, analyzed)| {
             (
@@ -175,51 +174,20 @@ pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
                         .data(history),
                 )
             },
-        );
-
-    chart
-}
-
-pub fn duration_canonical_rating_correlation(data: &Analyzation) -> Chart {
-    canonical_rating_correlation_chart(
-        "Duration vs Canonical Rating",
-        "Duration (minutes)",
-        data.tracks
-            .iter()
-            .map(|(track, analyzed)| {
-                (
-                    (track.duration.num_milliseconds() as f32) / 60_000.0,
-                    analyzed.canonical_rating,
-                    track.name.clone(),
-                )
-            })
-            .collect(),
-    )
-}
-
-pub fn popularity_canonical_rating_correlation(data: &Analyzation) -> Chart {
-    canonical_rating_correlation_chart(
-        "Popularity vs Canonical Rating",
-        "Popularity",
-        data.tracks
-            .iter()
-            .map(|(track, analyzed)| {
-                (
-                    track.popularity as f32,
-                    analyzed.canonical_rating,
-                    track.name.clone(),
-                )
-            })
-            .collect(),
-    )
+        )
 }
 
 pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
+    struct Point {
+        x: f32,
+        y: f32,
+        name: String,
+    }
     struct CorrelationSeries {
         name: &'static str,
         x_axis_name: &'static str,
         color: &'static str,
-        points: Vec<(f32, f32, String)>,
+        points: Vec<Point>,
     }
 
     let duration = CorrelationSeries {
@@ -229,12 +197,10 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         points: data
             .tracks
             .iter()
-            .map(|(track, analyzed)| {
-                (
-                    (track.duration.num_milliseconds() as f32) / 60_000.0,
-                    analyzed.canonical_rating,
-                    track.name.clone(),
-                )
+            .map(|(track, analyzed)| Point {
+                x: (track.duration.num_milliseconds() as f32) / 60_000.0,
+                y: analyzed.canonical_rating,
+                name: track.name.clone(),
             })
             .collect(),
     };
@@ -246,21 +212,86 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         points: data
             .tracks
             .iter()
-            .map(|(track, analyzed)| {
-                (
-                    track.popularity as f32,
-                    analyzed.canonical_rating,
-                    track.name.clone(),
-                )
+            .map(|(track, analyzed)| Point {
+                x: track.popularity as f32,
+                y: analyzed.canonical_rating,
+                name: track.name.clone(),
             })
             .collect(),
     };
+
+    #[derive(Clone, Copy)]
+    struct XY {
+        x: f32,
+        y: f32,
+    }
+    #[derive(Clone, Copy)]
+    struct RegressionLineWithCorrelation {
+        min: XY,
+        max: XY,
+        correlation: f32,
+    }
+
+    fn regression_line_with_correlation(points: &[Point]) -> Option<RegressionLineWithCorrelation> {
+        let n = points.len() as f64;
+        if n < 2.0 {
+            return None;
+        }
+
+        let (sum_x, sum_y) = points
+            .iter()
+            .fold((0.0_f64, 0.0_f64), |(sx, sy), Point { x, y, .. }| {
+                (sx + *x as f64, sy + *y as f64)
+            });
+        let mean_x = sum_x / n;
+        let mean_y = sum_y / n;
+
+        let (covariance, variance_x, variance_y) = points.iter().fold(
+            (0.0_f64, 0.0_f64, 0.0_f64),
+            |(cov, var_x, var_y), Point { x, y, .. }| {
+                let dx = *x as f64 - mean_x;
+                let dy = *y as f64 - mean_y;
+                (cov + dx * dy, var_x + dx * dx, var_y + dy * dy)
+            },
+        );
+
+        if variance_x <= f64::EPSILON || variance_y <= f64::EPSILON {
+            return None;
+        }
+
+        let slope = covariance / variance_x;
+        let intercept = mean_y - slope * mean_x;
+
+        let (min_x, max_x) = points
+            .iter()
+            .map(|point| point.x)
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), x| {
+                (min.min(x), max.max(x))
+            });
+
+        if !min_x.is_finite() || !max_x.is_finite() {
+            return None;
+        }
+
+        let start_y = (slope * min_x as f64 + intercept) as f32;
+        let end_y = (slope * max_x as f64 + intercept) as f32;
+        let correlation = (covariance / (variance_x.sqrt() * variance_y.sqrt())) as f32;
+
+        Some(RegressionLineWithCorrelation {
+            min: XY {
+                x: min_x,
+                y: start_y,
+            },
+            max: XY { x: max_x, y: end_y },
+            correlation,
+        })
+    }
 
     let series = [duration, popularity]
         .into_iter()
         .map(|series| {
             let regression = regression_line_with_correlation(&series.points);
-            let correlation = regression.map(|(_, _, correlation)| correlation);
+            let correlation = regression.map(|val| val.correlation);
             let legend_label = match correlation {
                 Some(correlation) => format!("{} (r={correlation:.4})", series.name),
                 None => series.name.to_string(),
@@ -303,7 +334,7 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         let scatter_data = series
             .points
             .iter()
-            .map(|&(x, y, ref name)| vec![x.into(), y.into(), name.clone().into()])
+            .map(|&Point { x, y, ref name }| vec![x.into(), y.into(), name.clone().into()])
             .collect::<Vec<Vec<CompositeValue>>>();
 
         chart = chart.series(
@@ -325,7 +356,15 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
                 .data(scatter_data),
         );
 
-        if let Some(((start_x, start_y), (end_x, end_y), _)) = regression {
+        if let Some(RegressionLineWithCorrelation {
+            min: XY {
+                x: start_x,
+                y: start_y,
+            },
+            max: XY { x: end_x, y: end_y },
+            ..
+        }) = regression
+        {
             chart = chart.series(
                 Line::new()
                     .name(&legend_label)
@@ -345,124 +384,6 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
     }
 
     chart
-}
-
-fn canonical_rating_correlation_chart(
-    title: &str,
-    x_axis_name: &str,
-    points: Vec<(f32, f32, String)>,
-) -> Chart {
-    let scatter_data = points
-        .iter()
-        .map(|&(x, y, ref name)| vec![x.into(), y.into(), name.clone().into()])
-        .collect::<Vec<Vec<CompositeValue>>>();
-
-    let mut chart = base_chart()
-        .title(Title::new().text(title))
-        .x_axis(Axis::new().type_(AxisType::Value).name(x_axis_name))
-        .y_axis(
-            Axis::new()
-                .type_(AxisType::Value)
-                .name("Canonical Rating")
-                .min(0.0)
-                .max(5.0),
-        )
-        .tooltip(Tooltip::new().trigger(Trigger::Axis))
-        .series(
-            Line::new()
-                .name("Tracks")
-                .show_symbol(true)
-                .line_style(LineStyle::new().width(0.0))
-                .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
-                    Formatter::Function(JsFunction::new_with_args(
-                        "params",
-                        &format!(
-                            "const [x, y, name] = params.data; return `${{name}}<br/>{}: ${{Number(x).toFixed(2)}}<br/>Canonical Rating: ${{Number(y).toFixed(2)}}`;",
-                            x_axis_name
-                        ),
-                    )),
-                ))
-                .data(scatter_data),
-        );
-
-    if let Some(((start_x, start_y), (end_x, end_y), correlation)) =
-        regression_line_with_correlation(&points)
-    {
-        chart = chart.series(
-            Line::new()
-                .name("Correlation")
-                .show_symbol(false)
-                .line_style(
-                    LineStyle::new()
-                        .color(Color::Value("rgb(239, 68, 68)".into()))
-                        .width(2.0),
-                )
-                .tooltip(Tooltip::new().trigger(Trigger::Axis).formatter(
-                    Formatter::Function(JsFunction::new_with_args(
-                        "params",
-                        &format!(
-                            "const p = Array.isArray(params) ? params.find(p => p.seriesName === 'Correlation') : params; if (!p) return ''; return `Correlation<br/>Pearson r: {:.4}`;",
-                            correlation
-                        ),
-                    )),
-                ))
-                .data(vec![
-                    vec![CompositeValue::from(start_x), CompositeValue::from(start_y)],
-                    vec![CompositeValue::from(end_x), CompositeValue::from(end_y)],
-                ]),
-        );
-    }
-
-    chart
-}
-
-fn regression_line_with_correlation(
-    points: &[(f32, f32, String)],
-) -> Option<((f32, f32), (f32, f32), f32)> {
-    let n = points.len() as f64;
-    if n < 2.0 {
-        return None;
-    }
-
-    let (sum_x, sum_y) = points
-        .iter()
-        .fold((0.0_f64, 0.0_f64), |(sx, sy), (x, y, _)| {
-            (sx + *x as f64, sy + *y as f64)
-        });
-    let mean_x = sum_x / n;
-    let mean_y = sum_y / n;
-
-    let (covariance, variance_x, variance_y) = points.iter().fold(
-        (0.0_f64, 0.0_f64, 0.0_f64),
-        |(cov, var_x, var_y), (x, y, _)| {
-            let dx = *x as f64 - mean_x;
-            let dy = *y as f64 - mean_y;
-            (cov + dx * dy, var_x + dx * dx, var_y + dy * dy)
-        },
-    );
-
-    if variance_x <= f64::EPSILON || variance_y <= f64::EPSILON {
-        return None;
-    }
-
-    let slope = covariance / variance_x;
-    let intercept = mean_y - slope * mean_x;
-
-    let (min_x, max_x) = points
-        .iter()
-        .map(|(x, _, _)| *x)
-        .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), x| {
-            (min.min(x), max.max(x))
-        });
-
-    if !min_x.is_finite() || !max_x.is_finite() {
-        return None;
-    }
-
-    let start_y = (slope * min_x as f64 + intercept) as f32;
-    let end_y = (slope * max_x as f64 + intercept) as f32;
-    let correlation = (covariance / (variance_x.sqrt() * variance_y.sqrt())) as f32;
-    Some(((min_x, start_y), (max_x, end_y), correlation))
 }
 
 fn linear_gradient() -> Color {
