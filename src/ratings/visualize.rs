@@ -272,7 +272,11 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
     let mut chart = base_chart()
         .title(Title::new().text("Canonical Rating Correlations"))
         .tooltip(Tooltip::new().trigger(Trigger::Item))
-        .x_axis(Axis::new().type_(AxisType::Value).name(series[0].0.x_axis_name))
+        .x_axis(
+            Axis::new()
+                .type_(AxisType::Value)
+                .name(series[0].0.x_axis_name),
+        )
         .x_axis(
             Axis::new()
                 .type_(AxisType::Value)
@@ -286,12 +290,14 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
                 .min(0.0)
                 .max(5.0),
         )
-        .legend(Legend::new().data(
-            series
-                .iter()
-                .map(|(_, _, label)| label.clone())
-                .collect::<Vec<_>>(),
-        ));
+        .legend(
+            Legend::new().data(
+                series
+                    .iter()
+                    .map(|(_, _, label)| label.clone())
+                    .collect::<Vec<_>>(),
+            ),
+        );
 
     for (index, (series, regression, legend_label)) in series.into_iter().enumerate() {
         let scatter_data = series

@@ -1,7 +1,7 @@
 use futures::StreamExt;
 use rspotify::{
     AuthCodeSpotify, Config, Credentials, OAuth,
-    model::{FullTrack, PlayableItem, PlaylistItem, SimplifiedPlaylist},
+    model::{CurrentPlaybackContext, FullTrack, PlayableItem, PlaylistItem, SimplifiedPlaylist},
     prelude::{BaseClient, OAuthClient},
     scopes,
 };
@@ -58,7 +58,7 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
 }
 
 macro_rules! refreshing {
-    ($fn_name:ident, $return:ty, $body:block, $const:ident) => {
+    ($fn_name:ident, $return:ty, $body:block, $const:ident, $interval:expr) => {
         static $const: RwLock<Option<$return>> = RwLock::const_new(None);
         static ${ concat($const, _LAST_FETCH) }: AtomicI64 = AtomicI64::new(0); // initialize to zero so the first access is always identified as after it
 
@@ -70,7 +70,7 @@ macro_rules! refreshing {
             let read_clone = async || -> Option<$return> { $const.read().await.clone() };
 
             let last_fetched = ${ concat($const, _LAST_FETCH) }.load(Ordering::Relaxed);
-            if (now - Duration::minutes(1)).unix_timestamp() > last_fetched
+            if (now - $interval).unix_timestamp() > last_fetched
                 && ${ concat($const, _LAST_FETCH) }
                     .compare_exchange(
                         last_fetched,
@@ -159,7 +159,8 @@ refreshing!(
         }
         playlists
     },
-    RATING_PLAYLISTS
+    RATING_PLAYLISTS,
+    Duration::minutes(1)
 );
 
 /// Contains all analyzations derived from `rating_history` and the providing track
@@ -220,7 +221,8 @@ refreshing!(
 
         analyze(ratings)
     },
-    RATINGS
+    RATINGS,
+    Duration::minutes(1)
 );
 
 /// Build analyzation based on tracks and rating histories
@@ -322,3 +324,18 @@ fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
         num_rated_tracks_history,
     }
 }
+
+refreshing!(
+    playback_state,
+    Option<CurrentPlaybackContext>,
+    {
+        let spotify = spotify().await;
+        spotify
+            .current_playback(None, None::<[_; 0]>)
+            .await
+            .ok()
+            .flatten()
+    },
+    PLAYBACK_STATE,
+    Duration::seconds(2)
+);
