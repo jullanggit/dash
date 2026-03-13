@@ -98,7 +98,6 @@ macro_rules! refreshing {
                 match read_clone().await {
                     // update asynchronously, return old value
                     Some(value) => {
-                        println!("{}, 1", stringify!($fn_name));
                         tokio::spawn(async move { write_with_cache($body).await; });
                         value
                     }
@@ -109,7 +108,6 @@ macro_rules! refreshing {
                         match get_cached().await {
                             // update asynchronously, return cached value
                             Some(cached) => {
-                                println!("{}, 2", stringify!($fn_name));
                                 tokio::spawn(async move { write_with_cache($body).await; });
 
                                 write(cached.clone()).await;
@@ -117,7 +115,6 @@ macro_rules! refreshing {
                             }
                             // update synchronously, return new value once its available
                             None => {
-                                println!("{}, 3", stringify!($fn_name));
                                 let new_value = $body;
                                 write_with_cache(new_value.clone()).await;
                                 new_value
@@ -128,7 +125,6 @@ macro_rules! refreshing {
             // up-to-date, or being initialized/updated by another thread
             } else {
                 loop {
-                    println!("{}, 4", stringify!($fn_name));
                     if let Some(value) = read_clone().await {
                         return value;
                     }
