@@ -1,0 +1,1 @@
+- use snapshot id to short-circuit fetching
