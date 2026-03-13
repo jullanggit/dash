@@ -184,7 +184,6 @@ pub fn duration_canonical_rating_correlation(data: &Analyzation) -> Chart {
     canonical_rating_correlation_chart(
         "Duration vs Canonical Rating",
         "Duration (minutes)",
-        "rgb(59, 130, 246)",
         data.tracks
             .iter()
             .map(|(track, analyzed)| {
@@ -202,7 +201,6 @@ pub fn popularity_canonical_rating_correlation(data: &Analyzation) -> Chart {
     canonical_rating_correlation_chart(
         "Popularity vs Canonical Rating",
         "Popularity",
-        "rgb(147, 51, 234)",
         data.tracks
             .iter()
             .map(|(track, analyzed)| {
@@ -219,7 +217,6 @@ pub fn popularity_canonical_rating_correlation(data: &Analyzation) -> Chart {
 fn canonical_rating_correlation_chart(
     title: &str,
     x_axis_name: &str,
-    point_color: &str,
     points: Vec<(f32, f32, String)>,
 ) -> Chart {
     let scatter_data = points
@@ -243,7 +240,6 @@ fn canonical_rating_correlation_chart(
                 .name("Tracks")
                 .show_symbol(true)
                 .line_style(LineStyle::new().width(0.0))
-                .item_style(ItemStyle::new().color(Color::Value(point_color.into())))
                 .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
                     Formatter::Function(JsFunction::new_with_args(
                         "params",
