@@ -48,9 +48,8 @@
             dioxus-cli
             vtsls
             eslint
-            sqlite
-            sea-orm-cli
             swc
+            just
           ];
         };
       }
