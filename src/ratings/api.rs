@@ -103,12 +103,16 @@ macro_rules! refreshing {
                         value
                     }
                     None => {
-                        let get_cached = async || serde_json::from_str(&fs::read_to_string(cache_path.clone()?).await.ok()?).ok();
+                        let get_cached = async || -> Option<$return> {
+                            serde_json::from_str(&fs::read_to_string(cache_path.clone()?).await.ok()?).ok()
+                        };
                         match get_cached().await {
                             // update asynchronously, return cached value
                             Some(cached) => {
                                 println!("{}, 2", stringify!($fn_name));
-                                tokio::spawn(async move { write($body).await; });
+                                tokio::spawn(async move { write_with_cache($body).await; });
+
+                                write(cached.clone()).await;
                                 cached
                             }
                             // update synchronously, return new value once its available
