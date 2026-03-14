@@ -1,4 +1,4 @@
-use crate::ratings::use_playback_state;
+use crate::ratings::{rating, use_playback_state};
 use dioxus::prelude::*;
 use rspotify_model::{CurrentPlaybackContext, PlayableItem};
 
@@ -39,14 +39,37 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                 None
             }
         });
+    let rating = track.and_then(|track| track.id.clone()).map(|id| {
+        use_resource(move || {
+            let id = id.clone();
+            async move { rating(id).await }
+        })
+    });
     let image = track.and_then(|track| track.album.images.first());
-    rsx!(if let Some(image) = image {
-        img {
-            src: "{image.url}",
-            width: image.width,
-            height: image.height,
+    rsx!(
+        if let Some(image) = image {
+            img {
+                src: "{image.url}",
+                width: image.width,
+                height: image.height,
+            }
+            div {
+                if let Some(track) = track {
+                    h3 { "{track.name}" }
+                }
+                match rating {
+                    Some(rating) => {
+                        match &*rating.read() {
+                            Some(Ok(rating)) => format!("Rating: {rating}"),
+                            Some(Err(e)) => format!("Error getting rating: {e}"),
+                            None => "Getting rating...".to_string(),
+                        }
+                    }
+                    None => String::new(),
+                }
+            }
         }
-    })
+    )
 }
 
 #[server]

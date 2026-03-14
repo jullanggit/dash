@@ -9,7 +9,7 @@ use rspotify::{
     scopes,
 };
 use rspotify_model::{
-    CurrentPlaybackContext, FullTrack, PlayableItem, PlaylistItem, SimplifiedPlaylist,
+    CurrentPlaybackContext, FullTrack, PlayableItem, PlaylistItem, SimplifiedPlaylist, TrackId,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -148,13 +148,16 @@ macro_rules! refreshing {
         pub fn ${ concat(use_, $fn_name) }() -> Signal<Option<$return>> {
             let mut state = use_signal(|| None);
 
-            use_interval(std::time::Duration::from_millis($interval_millis), move |_| async move {
+            let body = move || async move {
                 let new_state = $fn_name().await;
 
                 if let Ok(new_state) = new_state && state.read().as_ref() != Some(&new_state) {
                     state.set(Some(new_state));
                 }
-            });
+            };
+
+            use_future(move || body());
+            use_interval(std::time::Duration::from_millis($interval_millis), move |_| body());
 
             state
         }
@@ -252,6 +255,9 @@ refreshing!(
     1000
 );
 
+// TODO: make this configurable
+const DEFAULT_RATING: f32 = 2.5;
+
 /// Build analyzation based on tracks and rating histories
 fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     println!("Analyzing ratings");
@@ -297,7 +303,7 @@ fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
             .canonical_rating_history
             .last()
             .map(|(_, rating)| *rating)
-            .unwrap_or(2.5); // TODO: make default rating configurable
+            .unwrap_or(DEFAULT_RATING);
     }
 
     // cross-track analyzations
@@ -366,3 +372,16 @@ refreshing!(
     PLAYBACK_STATE,
     2000
 );
+
+// TODO: maybe return None if there are no ratings yet and display that in the ui
+#[server]
+pub async fn rating(track_id: TrackId<'static>) -> Result<f32> {
+    let ratings = ratings().await.expect("Server-to-server");
+
+    Ok(ratings
+        .tracks
+        .iter()
+        .find(|(track, _)| track.id.as_ref() == Some(&track_id))
+        .map(|(_, analyzation)| analyzation.canonical_rating)
+        .unwrap_or(DEFAULT_RATING))
+}
