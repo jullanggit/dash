@@ -52,6 +52,7 @@
             just
             tombi
             bacon
+            tailwindcss
           ];
         };
       }
