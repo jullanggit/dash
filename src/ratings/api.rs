@@ -1,9 +1,15 @@
+use dioxus::prelude::*;
+use dioxus_sdk_time::use_interval;
+#[cfg(feature = "server")]
 use futures::StreamExt;
+#[cfg(feature = "server")]
 use rspotify::{
     AuthCodeSpotify, Config, Credentials, OAuth,
-    model::{CurrentPlaybackContext, FullTrack, PlayableItem, PlaylistItem, SimplifiedPlaylist},
     prelude::{BaseClient, OAuthClient},
     scopes,
+};
+use rspotify_model::{
+    CurrentPlaybackContext, FullTrack, PlayableItem, PlaylistItem, SimplifiedPlaylist,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -15,11 +21,14 @@ use std::{
     },
 };
 use time::{Date, Duration, UtcDateTime};
-use tokio::{fs, sync::RwLock};
+#[cfg(feature = "server")]
+use tokio::{fs, sync::RwLock, time::sleep};
 
+#[cfg(feature = "server")]
 static SPOTIFY: OnceLock<AuthCodeSpotify> = OnceLock::new();
 
 // TODO: read credentials from config file (possibly with indirection for secrets) instead form .env
+#[cfg(feature = "server")]
 pub async fn spotify() -> &'static AuthCodeSpotify {
     println!("Getting spotify");
 
@@ -58,19 +67,21 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
 }
 
 macro_rules! refreshing {
-    ($fn_name:ident, $return:ty, $body:block, $const:ident, $interval:expr) => {
+    ($fn_name:ident, $return:ty, $body:block, $const:ident, $interval_millis:literal) => {
+        #[cfg(feature = "server")]
         static $const: RwLock<Option<$return>> = RwLock::const_new(None);
+        #[cfg(feature = "server")]
         static ${ concat($const, _LAST_FETCH) }: AtomicI64 = AtomicI64::new(0); // initialize to zero so the first access is always identified as after it
 
-        pub async fn $fn_name() -> $return {
-            use tokio::time::sleep;
-
+        /// Always returns Ok(value) on the server
+        #[server]
+        pub async fn $fn_name() -> Result<$return> {
             let now = UtcDateTime::now();
 
             let read_clone = async || -> Option<$return> { $const.read().await.clone() };
 
             let last_fetched = ${ concat($const, _LAST_FETCH) }.load(Ordering::Relaxed);
-            if (now - $interval).unix_timestamp() > last_fetched
+            if (now - time::Duration::milliseconds($interval_millis)).unix_timestamp() > last_fetched
                 && ${ concat($const, _LAST_FETCH) }
                     .compare_exchange(
                         last_fetched,
@@ -99,7 +110,7 @@ macro_rules! refreshing {
                     // update asynchronously, return old value
                     Some(value) => {
                         tokio::spawn(async move { write_with_cache($body).await; });
-                        value
+                        Ok(value)
                     }
                     None => {
                         let get_cached = async || -> Option<$return> {
@@ -111,13 +122,13 @@ macro_rules! refreshing {
                                 tokio::spawn(async move { write_with_cache($body).await; });
 
                                 write(cached.clone()).await;
-                                cached
+                                Ok(cached)
                             }
                             // update synchronously, return new value once its available
                             None => {
                                 let new_value = $body;
                                 write_with_cache(new_value.clone()).await;
-                                new_value
+                                Ok(new_value)
                             }
                         }
                     }
@@ -126,12 +137,26 @@ macro_rules! refreshing {
             } else {
                 loop {
                     if let Some(value) = read_clone().await {
-                        return value;
+                        return Ok(value);
                     }
 
                     sleep(tokio::time::Duration::from_millis(100)).await;
                 }
             }
+        }
+
+        pub fn ${ concat(use_, $fn_name) }() -> Signal<Option<$return>> {
+            let mut state = use_signal(|| None);
+
+            use_interval(std::time::Duration::from_millis($interval_millis), move |_| async move {
+                let new_state = $fn_name().await;
+
+                if let Ok(new_state) = new_state && state.read().as_ref() != Some(&new_state) {
+                    state.set(Some(new_state));
+                }
+            });
+
+            state
         }
     };
 }
@@ -160,11 +185,11 @@ refreshing!(
         playlists
     },
     RATING_PLAYLISTS,
-    Duration::minutes(1)
+    1000
 );
 
 /// Contains all analyzations derived from `rating_history` and the providing track
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct TrackAnalyzation {
     /// sorted by ascending date
     pub rating_history: Vec<(UtcDateTime, f32)>,
@@ -172,7 +197,7 @@ pub struct TrackAnalyzation {
     pub canonical_rating: f32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Analyzation {
     pub tracks: AnalyzedTracks,
     /// sorted by ascending date
@@ -188,7 +213,9 @@ refreshing!(
     Analyzation,
     {
         let spotify = spotify().await;
-        let playlists = rating_playlists().await;
+        let playlists = rating_playlists()
+            .await
+            .expect("Never errors on server-to-server calls");
         let mut ratings = Vec::new();
 
         println!("Getting ratings");
@@ -222,7 +249,7 @@ refreshing!(
         analyze(ratings)
     },
     RATINGS,
-    Duration::minutes(1)
+    1000
 );
 
 /// Build analyzation based on tracks and rating histories
@@ -337,5 +364,5 @@ refreshing!(
             .flatten()
     },
     PLAYBACK_STATE,
-    Duration::seconds(2)
+    2000
 );

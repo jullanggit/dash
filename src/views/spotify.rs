@@ -1,10 +1,13 @@
+use crate::ratings::use_playback_state;
 use dioxus::prelude::*;
+use rspotify_model::{CurrentPlaybackContext, PlayableItem};
 
 #[component]
 pub fn Spotify() -> Element {
     let charts = use_server_future(move || async move { charts().await })?;
+    let playback_state = use_playback_state();
     rsx!(
-        h2 { "Control" }
+        Player { playback_state }
         h2 { "Charts" }
         match &*charts.read_unchecked() {
             Some(Ok(charts)) => {
@@ -20,6 +23,32 @@ pub fn Spotify() -> Element {
     )
 }
 
+#[component]
+fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Element {
+    let read = playback_state.read();
+    let state = match *read {
+        Some(ref state) => state.as_ref(),
+        None => None,
+    };
+    let track = state
+        .and_then(|state| state.item.as_ref())
+        .and_then(|item| {
+            if let PlayableItem::Track(track) = item {
+                Some(track)
+            } else {
+                None
+            }
+        });
+    let image = track.and_then(|track| track.album.images.first());
+    rsx!(if let Some(image) = image {
+        img {
+            src: "{image.url}",
+            width: image.width,
+            height: image.height,
+        }
+    })
+}
+
 #[server]
 async fn charts() -> Result<[String; 5]> {
     use crate::ratings::{
@@ -31,7 +60,9 @@ async fn charts() -> Result<[String; 5]> {
 
     let renderer = HtmlRenderer::new("Renderer", 1920, 1080);
 
-    let analyzation = ratings().await;
+    let analyzation = ratings()
+        .await
+        .expect("Never errors on server-to-server calls");
 
     Ok([
         canonical_rating_distribution,

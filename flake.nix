@@ -51,6 +51,7 @@
             swc
             just
             tombi
+            bacon
           ];
         };
       }

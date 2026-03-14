@@ -8,7 +8,6 @@ use views::{Home, Navbar, Spotify};
 /// Define a components module that contains all shared components for our app.
 mod components;
 mod config;
-#[cfg(feature = "server")]
 mod ratings;
 /// Define a views module that contains the UI for all Layouts and Routes for our app.
 mod views;
@@ -55,14 +54,6 @@ fn main() {
 /// Components should be annotated with `#[component]` to support props, better error messages, and autocomplete
 #[component]
 fn App() -> Element {
-    #[cfg(feature = "server")]
-    {
-        use crate::ratings::rating_playlists;
-
-        tokio::spawn(async move {
-            rating_playlists().await;
-        });
-    }
     // The `rsx!` macro lets us define HTML inside of rust. It expands to an Element with all of our HTML inside.
     rsx! {
         // In addition to element and text (which we will see later), rsx can contain other components. In this case,
