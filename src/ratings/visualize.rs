@@ -5,6 +5,7 @@ use std::{
 
 use crate::ratings::Analyzation;
 use charming::{
+    Chart,
     component::{Axis, Legend, Title},
     datatype::CompositeValue,
     element::{
@@ -12,7 +13,6 @@ use charming::{
         LineStyle, Tooltip, Trigger,
     },
     series::Line,
-    Chart,
 };
 
 use time::{Date, Month, UtcDateTime};
@@ -178,12 +178,14 @@ pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
 }
 
 pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
+    #[derive(Debug)]
     struct Point {
         x: f32,
         y: f32,
         name: String,
         release_date: String,
     }
+    #[derive(Debug)]
     struct CorrelationSeries {
         name: &'static str,
         x_axis_name: &'static str,
@@ -255,12 +257,12 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
             .collect(),
     };
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     struct XY {
         x: f32,
         y: f32,
     }
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     struct RegressionLineWithCorrelation {
         min: XY,
         max: XY,
@@ -351,15 +353,11 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         )
         .x_axis(
             Axis::new()
-                .type_(AxisType::Value)
+                .type_(AxisType::Time)
                 .name(series[2].0.x_axis_name)
-                .offset(42.0)
-                .axis_label(AxisLabel::new().formatter(Formatter::Function(
-                    JsFunction::new_with_args(
-                        "value",
-                        "return new Date(Number(value)).getUTCFullYear().toString();",
-                    ),
-                ))),
+                .position("bottom")
+                .offset(30.0)
+                .align_ticks(true),
         )
         .y_axis(
             Axis::new()
