@@ -9,8 +9,8 @@ use charming::{
     component::{Axis, Legend, Title},
     datatype::CompositeValue,
     element::{
-        AreaStyle, AxisLabel, AxisType, Color, ColorStop, Formatter, ItemStyle, JsFunction,
-        LineStyle, Tooltip, Trigger,
+        AreaStyle, AxisLabel, AxisLine, AxisTick, AxisType, Color, ColorStop, Formatter, ItemStyle,
+        JsFunction, LineStyle, SplitLine, Tooltip, Trigger,
     },
     series::Line,
 };
@@ -343,12 +343,14 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         .x_axis(
             Axis::new()
                 .type_(AxisType::Value)
+                .split_line(SplitLine::new().show(false))
                 .name(series[0].0.x_axis_name),
         )
         .x_axis(
             Axis::new()
                 .type_(AxisType::Value)
                 .name(series[1].0.x_axis_name)
+                .split_line(SplitLine::new().show(false))
                 .position("top"),
         )
         .x_axis(
@@ -356,8 +358,9 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
                 .type_(AxisType::Time)
                 .name(series[2].0.x_axis_name)
                 .position("bottom")
-                .offset(30.0)
-                .align_ticks(true),
+                .split_line(SplitLine::new().show(false))
+                .split_number(5)
+                .offset(30.0),
         )
         .y_axis(
             Axis::new()
