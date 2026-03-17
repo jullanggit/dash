@@ -5,17 +5,17 @@ use std::{
 
 use crate::ratings::Analyzation;
 use charming::{
-    Chart,
     component::{Axis, Legend, Title},
     datatype::CompositeValue,
     element::{
-        AreaStyle, AxisType, Color, ColorStop, Formatter, ItemStyle, JsFunction, LineStyle,
-        Tooltip, Trigger,
+        AreaStyle, AxisLabel, AxisType, Color, ColorStop, Formatter, ItemStyle, JsFunction,
+        LineStyle, Tooltip, Trigger,
     },
     series::Line,
+    Chart,
 };
 
-use time::UtcDateTime;
+use time::{Date, Month, UtcDateTime};
 
 pub fn rating_per_song(data: Analyzation) {
     let mut vec = data
@@ -182,6 +182,7 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         x: f32,
         y: f32,
         name: String,
+        release_date: String,
     }
     struct CorrelationSeries {
         name: &'static str,
@@ -201,6 +202,11 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
                 x: (track.duration.num_milliseconds() as f32) / 60_000.0,
                 y: analyzed.canonical_rating,
                 name: track.name.clone(),
+                release_date: track
+                    .album
+                    .release_date
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".to_string()),
             })
             .collect(),
     };
@@ -216,6 +222,35 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
                 x: track.popularity as f32,
                 y: analyzed.canonical_rating,
                 name: track.name.clone(),
+                release_date: track
+                    .album
+                    .release_date
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".to_string()),
+            })
+            .collect(),
+    };
+
+    let release_date = CorrelationSeries {
+        name: "Release Date",
+        x_axis_name: "Release Date",
+        color: "rgb(245, 158, 11)",
+        points: data
+            .tracks
+            .iter()
+            .filter_map(|(track, analyzed)| {
+                let release_date = track.album.release_date.clone()?;
+                let timestamp = release_date_to_timestamp_millis(
+                    &release_date,
+                    track.album.release_date_precision.as_deref(),
+                )?;
+
+                Some(Point {
+                    x: timestamp as f32,
+                    y: analyzed.canonical_rating,
+                    name: track.name.clone(),
+                    release_date,
+                })
             })
             .collect(),
     };
@@ -287,7 +322,7 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         })
     }
 
-    let series = [duration, popularity]
+    let series = [duration, popularity, release_date]
         .into_iter()
         .map(|series| {
             let regression = regression_line_with_correlation(&series.points);
@@ -314,6 +349,18 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
                 .name(series[1].0.x_axis_name)
                 .position("top"),
         )
+        .x_axis(
+            Axis::new()
+                .type_(AxisType::Value)
+                .name(series[2].0.x_axis_name)
+                .offset(42.0)
+                .axis_label(AxisLabel::new().formatter(Formatter::Function(
+                    JsFunction::new_with_args(
+                        "value",
+                        "return new Date(Number(value)).getUTCFullYear().toString();",
+                    ),
+                ))),
+        )
         .y_axis(
             Axis::new()
                 .type_(AxisType::Value)
@@ -334,7 +381,21 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         let scatter_data = series
             .points
             .iter()
-            .map(|&Point { x, y, ref name }| vec![x.into(), y.into(), name.clone().into()])
+            .map(
+                |Point {
+                     x,
+                     y,
+                     name,
+                     release_date,
+                 }| {
+                    vec![
+                        (*x).into(),
+                        (*y).into(),
+                        name.clone().into(),
+                        release_date.clone().into(),
+                    ]
+                },
+            )
             .collect::<Vec<Vec<CompositeValue>>>();
 
         chart = chart.series(
@@ -347,7 +408,9 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
                     Formatter::Function(JsFunction::new_with_args(
                         "params",
                         &format!(
-                            "const [x, y, name] = params.data; return `${{name}}<br/>{}: ${{Number(x).toFixed(2)}}<br/>Canonical Rating: ${{Number(y).toFixed(2)}}`;",
+                            "const [x, y, name, releaseDate] = params.data; const xValue = {} === 'Release Date' ? releaseDate : Number(x).toFixed(2); return `${{name}}<br/>{}: ${{xValue}}<br/>Canonical Rating: ${{Number(y).toFixed(2)}}`;",
+                            serde_json::to_string(series.x_axis_name)
+                                .expect("series axis names should serialize"),
                             series.x_axis_name
                         ),
                     )),
@@ -384,6 +447,35 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
     }
 
     chart
+}
+
+fn release_date_to_timestamp_millis(
+    release_date: &str,
+    release_date_precision: Option<&str>,
+) -> Option<i64> {
+    let inferred_precision = match release_date.len() {
+        4 => "year",
+        7 => "month",
+        10 => "day",
+        _ => return None,
+    };
+    let precision = release_date_precision.unwrap_or(inferred_precision);
+
+    let mut parts = release_date.split('-');
+    let year = parts.next()?.parse().ok()?;
+    let month = match precision {
+        "year" => Month::January,
+        "month" | "day" => Month::try_from(parts.next()?.parse::<u8>().ok()?).ok()?,
+        _ => return None,
+    };
+    let day = match precision {
+        "day" => parts.next()?.parse().ok()?,
+        "year" | "month" => 1,
+        _ => return None,
+    };
+
+    let date = Date::from_calendar_date(year, month, day).ok()?;
+    Some(date.with_hms(0, 0, 0).ok()?.assume_utc().unix_timestamp() * 1000)
 }
 
 fn linear_gradient() -> Color {
