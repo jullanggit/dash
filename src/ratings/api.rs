@@ -4,7 +4,7 @@ use dioxus_sdk_time::use_interval;
 use futures::StreamExt;
 #[cfg(feature = "server")]
 use rspotify::{
-    AuthCodeSpotify, Config, Credentials, OAuth,
+    AuthCodeSpotify, ClientError, Config, Credentials, OAuth,
     prelude::{BaseClient, OAuthClient},
     scopes,
 };
@@ -67,7 +67,7 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
 }
 
 macro_rules! refreshing {
-    ($fn_name:ident, $return:ty, $body:block, $const:ident, $interval_millis:literal) => {
+    ($fn_name:ident, $return:ty, $body:expr, $const:ident, $interval_millis:literal) => {
         #[cfg(feature = "server")]
         static $const: RwLock<Option<$return>> = RwLock::const_new(None);
         #[cfg(feature = "server")]
@@ -91,6 +91,8 @@ macro_rules! refreshing {
                     )
                     .is_ok()
             {
+                let function = $body;
+
                 let cache_path = home_dir().map(|mut path| {
                     path.push(format!(".cache/dash/{}.json", stringify!($fn_name)));
                     path
@@ -109,7 +111,8 @@ macro_rules! refreshing {
                 match read_clone().await {
                     // update asynchronously, return old value
                     Some(value) => {
-                        tokio::spawn(async move { write_with_cache($body).await; });
+                        let clone = value.clone();
+                        tokio::spawn(async move { write_with_cache(function(Some(clone)).await).await; });
                         Ok(value)
                     }
                     None => {
@@ -119,14 +122,15 @@ macro_rules! refreshing {
                         match get_cached().await {
                             // update asynchronously, return cached value
                             Some(cached) => {
-                                tokio::spawn(async move { write_with_cache($body).await; });
+                                let clone = cached.clone();
+                                tokio::spawn(async move { write_with_cache(function(Some(clone)).await).await; });
 
                                 write(cached.clone()).await;
                                 Ok(cached)
                             }
                             // update synchronously, return new value once its available
                             None => {
-                                let new_value = $body;
+                                let new_value = function(None).await;
                                 write_with_cache(new_value.clone()).await;
                                 Ok(new_value)
                             }
@@ -166,16 +170,14 @@ macro_rules! refreshing {
 refreshing!(
     rating_playlists,
     Vec<(f32, SimplifiedPlaylist)>,
-    {
+    async |previous| {
         let spotify = spotify().await;
         let mut playlists = Vec::new();
 
         println!("Getting rating playlists");
 
-        let mut stream = spotify.current_user_playlists();
-        while let Some(playlist) = stream.next().await {
-            if let Ok(playlist) = playlist
-                && let Ok(rating) = playlist.name.parse::<f32>()
+        let mut callback = |playlist: SimplifiedPlaylist| {
+            if let Ok(rating) = playlist.name.parse::<f32>()
                 && (0.0..=5.0).contains(&rating)
             {
                 if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
@@ -184,7 +186,47 @@ refreshing!(
                     playlists.push((rating, playlist.clone()))
                 };
             }
+        };
+
+        let mut offset = 0;
+        loop {
+            let page = spotify
+                .current_user_playlists_manual(None, Some(offset))
+                .await;
+            // retry on too many requests error, log and ignore all others
+            match page {
+                Ok(page) => {
+                    offset += page.items.len() as u32;
+                    for item in page.items {
+                        callback(item);
+                    }
+                    if page.next.is_none() {
+                        break;
+                    }
+                }
+                Err(ClientError::Http(http)) => match *http {
+                    rspotify_http::HttpError::StatusCode(response) => {
+                        let code = response.status().as_u16();
+                        if code == 429 {
+                            let retry_after = response
+                                .headers()
+                                .iter()
+                                .find(|(name, value)| name.as_str() == "retry-after")
+                                .and_then(|(_, value)| value.to_str().ok())
+                                .map(|str| str.parse().unwrap_or(60));
+                            if let Some(after) = retry_after {
+                                // wait for retry-after, retry in the next loop, as offset didnt get incremented
+                                println!("Retrying after {after} seconds");
+                                sleep(std::time::Duration::from_secs(after)).await;
+                            }
+                        }
+                    }
+                    other => eprintln!("Error getting page: {other}"),
+                },
+                Err(other) => eprintln!("Error getting page: {other}"),
+            }
         }
+
         playlists
     },
     RATING_PLAYLISTS,
@@ -214,7 +256,7 @@ pub type AnalyzedTracks = Vec<(FullTrack, TrackAnalyzation)>;
 refreshing!(
     ratings,
     Analyzation,
-    {
+    async |previous| {
         let spotify = spotify().await;
         let playlists = rating_playlists()
             .await
@@ -361,7 +403,7 @@ fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
 refreshing!(
     playback_state,
     Option<CurrentPlaybackContext>,
-    {
+    async |previous| {
         let spotify = spotify().await;
         spotify
             .current_playback(None, None::<[_; 0]>)

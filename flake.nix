@@ -53,6 +53,8 @@
             tombi
             bacon
             tailwindcss
+            openssl
+            pkg-config
           ];
         };
       }

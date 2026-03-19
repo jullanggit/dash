@@ -1,6 +1,6 @@
-use crate::ratings::{rating, use_playback_state};
+use crate::ratings::{rating as fetch_rating, use_playback_state};
 use dioxus::prelude::*;
-use rspotify_model::{CurrentPlaybackContext, PlayableItem};
+use rspotify_model::{CurrentPlaybackContext, FullTrack, PlayableItem};
 
 #[component]
 pub fn Spotify() -> Element {
@@ -25,6 +25,23 @@ pub fn Spotify() -> Element {
 
 #[component]
 fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Element {
+    let track_id = playback_state.map(move |state| match state {
+        Some(Some(CurrentPlaybackContext {
+            item: Some(PlayableItem::Track(FullTrack { id, .. })),
+            ..
+        })) => id,
+        _ => &None,
+    });
+    let rating = use_resource(move || {
+        let id = track_id.read().clone();
+        async move {
+            match id {
+                Some(id) => Some(fetch_rating(id).await),
+                None => None,
+            }
+        }
+    });
+
     let read = playback_state.read();
     let state = match *read {
         Some(ref state) => state.as_ref(),
@@ -39,12 +56,6 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                 None
             }
         });
-    let rating = track.and_then(|track| track.id.clone()).map(|id| {
-        use_resource(move || {
-            let id = id.clone();
-            async move { rating(id).await }
-        })
-    });
     let image = track.and_then(|track| track.album.images.first());
     rsx!(
         if let Some(image) = image {
@@ -57,15 +68,11 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                 if let Some(track) = track {
                     h3 { "{track.name}" }
                 }
-                match rating {
-                    Some(rating) => {
-                        match &*rating.read() {
-                            Some(Ok(rating)) => format!("Rating: {rating}"),
-                            Some(Err(e)) => format!("Error getting rating: {e}"),
-                            None => "Getting rating...".to_string(),
-                        }
-                    }
-                    None => String::new(),
+                match &*rating.read() {
+                    Some(Some(Ok(rating))) => format!("Rating: {rating}"),
+                    Some(Some(Err(e))) => format!("Error getting rating: {e}"),
+                    Some(None) => String::new(),
+                    None => "Getting rating...".to_string(),
                 }
             }
         }
