@@ -22,7 +22,11 @@ use std::{
 };
 use time::{Date, Duration, UtcDateTime};
 #[cfg(feature = "server")]
-use tokio::{fs, sync::RwLock, time::sleep};
+use tokio::{
+    fs,
+    sync::{Mutex, RwLock},
+    time::{Duration as TokioDuration, sleep},
+};
 
 #[cfg(feature = "server")]
 static SPOTIFY: OnceLock<AuthCodeSpotify> = OnceLock::new();
@@ -66,87 +70,131 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
     }
 }
 
+/// Return the result of `f`, caching to memory and disk, updating ever `interval`.
+///
+/// `last_fetched` serves as synchronization and interval control: whenever a request is updating the value, it locks the mutex, and updates the datetime inside.
+/// The `in_mem_cache` and `last_fetched` are separated, to allow for quick cache retrieval even while the value is being updated.
+/// `in_mem_cache` is only None before the first initialization.
+#[cfg(feature = "server")]
+async fn refreshing<T, F>(
+    f: F,
+    in_mem_cache: &'static RwLock<Option<T>>,
+    last_fetched: &'static Mutex<UtcDateTime>,
+    interval: time::Duration,
+) -> T
+where
+    T: Clone + Serialize + for<'a> Deserialize<'a> + Send + Sync,
+    F: AsyncFn(Option<T>) -> T + Send + 'static,
+    for<'a> F::CallRefFuture<'a>: Send,
+{
+    let now = UtcDateTime::now();
+
+    let read_mem_cache = async || in_mem_cache.read().await.clone();
+
+    let in_mem_cached = read_mem_cache().await;
+    let needs_update = last_fetched
+        .try_lock()
+        .map(|last_fetched| (now > *last_fetched + interval, last_fetched));
+    match (in_mem_cached, needs_update) {
+        // there is a cached value, and it doesn't need updating
+        (Some(cached), Ok((false, _))) | (Some(cached), Err(_)) => return cached,
+        // no other request is currently updating the value, and it needs updating; update it
+        (in_mem_cached, Ok((true, guard))) => {
+            let write_mem_cache = async move |value: T| *in_mem_cache.write().await = Some(value);
+
+            let disk_cache_path = home_dir().map(|mut path| {
+                path.push(format!(".cache/dash/{}.json", stringify!($fn_name)));
+                path
+            });
+            let disk_cache_path_clone = disk_cache_path.clone();
+            let write_mem_and_disk_cache = async move |value: T| {
+                write_mem_cache(value.clone()).await;
+                let path = disk_cache_path_clone?;
+                fs::create_dir_all(path.parent()?).await.ok()?;
+                fs::write(path, serde_json::to_string(&value).ok()?)
+                    .await
+                    .ok()
+            };
+
+            match in_mem_cached {
+                // fetch and write new value to cache in the background
+                Some(cached) => {
+                    let clone = cached.clone();
+                    tokio::spawn(async move {
+                        write_mem_and_disk_cache(f(Some(clone)).await).await;
+
+                        // hold lock until all caches are updated
+                        drop(guard);
+                    });
+
+                    cached
+                }
+                None => {
+                    let read_disk_cache = async || -> Option<T> {
+                        serde_json::from_str(
+                            &fs::read_to_string(disk_cache_path.clone()?).await.ok()?,
+                        )
+                        .ok()
+                    };
+                    match read_disk_cache().await {
+                        // update asynchronously, return cached value
+                        Some(cached) => {
+                            write_mem_cache(cached.clone()).await;
+
+                            let clone = cached.clone();
+                            tokio::spawn(async move {
+                                write_mem_and_disk_cache(f(Some(clone)).await).await;
+
+                                // hold lock until all caches are updated
+                                drop(guard);
+                            });
+
+                            cached
+                        }
+                        // update synchronously, return new value once its available
+                        None => {
+                            let new_value = f(None).await;
+                            write_mem_and_disk_cache(new_value.clone()).await;
+
+                            // hold lock until all caches are updated
+                            drop(guard);
+
+                            new_value
+                        }
+                    }
+                }
+            }
+        }
+        // cache not yet initialized, but another request is currently doing so; wait for that to complete
+        (None, Err(_)) => loop {
+            if let Some(value) = read_mem_cache().await {
+                return value;
+            }
+
+            sleep(TokioDuration::from_millis(100)).await;
+        },
+        (None, Ok((false, _))) => {
+            panic!("If the value doesn't need updating, there should be a cached value")
+        }
+    }
+}
+
 macro_rules! refreshing {
-    ($fn_name:ident, $return:ty, $body:expr, $const:ident, $interval_millis:literal) => {
+    ($fn_name:ident, $return:ty, $closure:expr, $const:ident, $interval:expr) => {
         #[cfg(feature = "server")]
         static $const: RwLock<Option<$return>> = RwLock::const_new(None);
         #[cfg(feature = "server")]
-        static ${ concat($const, _LAST_FETCH) }: AtomicI64 = AtomicI64::new(0); // initialize to zero so the first access is always identified as after it
+        static ${ concat($const, _LAST_FETCH) }: Mutex<UtcDateTime> = Mutex::const_new(UtcDateTime::MIN); // initialize to min so the first access is always identified as after it
+
+        #[cfg(feature = "server")]
+        pub async fn ${ concat($fn_name, _server) }() -> $return {
+            refreshing($closure, &$const, &${ concat($const, _LAST_FETCH) }, $interval).await
+        }
 
         /// Always returns Ok(value) on the server
         #[server]
         pub async fn $fn_name() -> Result<$return> {
-            let now = UtcDateTime::now();
-
-            let read_clone = async || -> Option<$return> { $const.read().await.clone() };
-
-            let last_fetched = ${ concat($const, _LAST_FETCH) }.load(Ordering::Relaxed);
-            if (now - time::Duration::milliseconds($interval_millis)).unix_timestamp() > last_fetched
-                && ${ concat($const, _LAST_FETCH) }
-                    .compare_exchange(
-                        last_fetched,
-                        now.unix_timestamp(),
-                        Ordering::Relaxed,
-                        Ordering::Relaxed,
-                    )
-                    .is_ok()
-            {
-                let function = $body;
-
-                let cache_path = home_dir().map(|mut path| {
-                    path.push(format!(".cache/dash/{}.json", stringify!($fn_name)));
-                    path
-                });
-
-                let clone = cache_path.clone();
-
-                let write = async move |value: $return| *$const.write().await = Some(value.clone());
-                let write_with_cache = async move |value: $return| {
-                    write(value.clone()).await;
-                    let path = clone?;
-                    fs::create_dir_all(path.parent()?).await.ok()?;
-                    fs::write(path, serde_json::to_string(&value).ok()?).await.ok()
-                };
-
-                match read_clone().await {
-                    // update asynchronously, return old value
-                    Some(value) => {
-                        let clone = value.clone();
-                        tokio::spawn(async move { write_with_cache(function(Some(clone)).await).await; });
-                        Ok(value)
-                    }
-                    None => {
-                        let get_cached = async || -> Option<$return> {
-                            serde_json::from_str(&fs::read_to_string(cache_path.clone()?).await.ok()?).ok()
-                        };
-                        match get_cached().await {
-                            // update asynchronously, return cached value
-                            Some(cached) => {
-                                let clone = cached.clone();
-                                tokio::spawn(async move { write_with_cache(function(Some(clone)).await).await; });
-
-                                write(cached.clone()).await;
-                                Ok(cached)
-                            }
-                            // update synchronously, return new value once its available
-                            None => {
-                                let new_value = function(None).await;
-                                write_with_cache(new_value.clone()).await;
-                                Ok(new_value)
-                            }
-                        }
-                    }
-                }
-            // up-to-date, or being initialized/updated by another thread
-            } else {
-                loop {
-                    if let Some(value) = read_clone().await {
-                        return Ok(value);
-                    }
-
-                    sleep(tokio::time::Duration::from_millis(100)).await;
-                }
-            }
+            Ok(${ concat($fn_name, _server) }().await)
         }
 
         pub fn ${ concat(use_, $fn_name) }() -> Signal<Option<$return>> {
@@ -161,7 +209,7 @@ macro_rules! refreshing {
             };
 
             use_future(move || body());
-            use_interval(std::time::Duration::from_millis($interval_millis), move |_| body());
+            use_interval(std::time::Duration::from_nanos($interval.whole_nanoseconds() as u64), move |_| body());
 
             state
         }
@@ -230,7 +278,7 @@ refreshing!(
         playlists
     },
     RATING_PLAYLISTS,
-    1000
+    Duration::seconds(1)
 );
 
 /// Contains all analyzations derived from `rating_history` and the providing track
@@ -294,7 +342,7 @@ refreshing!(
         analyze(ratings)
     },
     RATINGS,
-    1000
+    Duration::seconds(1)
 );
 
 // TODO: make this configurable
@@ -412,7 +460,7 @@ refreshing!(
             .flatten()
     },
     PLAYBACK_STATE,
-    2000
+    Duration::seconds(2)
 );
 
 // TODO: maybe return None if there are no ratings yet and display that in the ui

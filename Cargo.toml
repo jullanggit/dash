@@ -27,7 +27,7 @@ tokio = { version = "1.50.0", features = ["fs"], optional = true }
 wasm-bindgen = "=0.2.108"  # corresponds to installed version. Can be removed if 'dx serve' works without it.
 
 [features]
-default = ["server"]
+default = []
 # The feature that are only required for the desktop = ["dioxus/desktop"] build target should be optional and only enabled in the desktop = ["dioxus/desktop"] feature
 desktop = ["dioxus/desktop"]
 # The feature that are only required for the mobile = ["dioxus/mobile"] build target should be optional and only enabled in the mobile = ["dioxus/mobile"] feature
