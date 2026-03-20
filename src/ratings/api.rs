@@ -12,14 +12,7 @@ use rspotify_model::{
     CurrentPlaybackContext, FullTrack, PlayableItem, PlaylistItem, SimplifiedPlaylist, TrackId,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    env::home_dir,
-    sync::{
-        OnceLock,
-        atomic::{AtomicI64, Ordering},
-    },
-};
+use std::{collections::BTreeMap, env::home_dir, sync::OnceLock};
 use time::{Date, Duration, UtcDateTime};
 #[cfg(feature = "server")]
 use tokio::{
@@ -97,7 +90,7 @@ where
         .map(|last_fetched| (now > *last_fetched + interval, last_fetched));
     match (in_mem_cached, needs_update) {
         // there is a cached value, and it doesn't need updating
-        (Some(cached), Ok((false, _))) | (Some(cached), Err(_)) => return cached,
+        (Some(cached), Ok((false, _))) | (Some(cached), Err(_)) => cached,
         // no other request is currently updating the value, and it needs updating; update it
         (in_mem_cached, Ok((true, guard))) => {
             let write_mem_cache = async move |value: T| *in_mem_cache.write().await = Some(value);
@@ -259,7 +252,7 @@ refreshing!(
                             let retry_after = response
                                 .headers()
                                 .iter()
-                                .find(|(name, value)| name.as_str() == "retry-after")
+                                .find(|(name, _)| name.as_str() == "retry-after")
                                 .and_then(|(_, value)| value.to_str().ok())
                                 .map(|str| str.parse().unwrap_or(60));
                             if let Some(after) = retry_after {
@@ -319,14 +312,14 @@ refreshing!(
                 match item {
                     Ok(PlaylistItem {
                         added_at: Some(added_at),
-                        track: Some(PlayableItem::Track(track)),
+                        item: Some(PlayableItem::Track(item)),
                         ..
                     }) => {
                         let entry = match ratings.iter_mut().find_map(|(s_track, analyzation)| {
-                            (*s_track == track).then_some(analyzation)
+                            (*s_track == item).then_some(analyzation)
                         }) {
                             Some(ratings) => ratings,
-                            None => &mut ratings.push_mut((track, TrackAnalyzation::default())).1,
+                            None => &mut ratings.push_mut((item, TrackAnalyzation::default())).1,
                         };
 
                         entry.rating_history.push((

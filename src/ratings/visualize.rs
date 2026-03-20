@@ -9,8 +9,8 @@ use charming::{
     component::{Axis, Legend, Title},
     datatype::CompositeValue,
     element::{
-        AreaStyle, AxisLabel, AxisLine, AxisTick, AxisType, Color, ColorStop, Formatter, ItemStyle,
-        JsFunction, LineStyle, SplitLine, Tooltip, Trigger,
+        AreaStyle, AxisType, Color, ColorStop, Formatter, ItemStyle, JsFunction, LineStyle,
+        SplitLine, Tooltip, Trigger,
     },
     series::Line,
 };
@@ -213,6 +213,7 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
             .collect(),
     };
 
+    // Apparently spotify removed this field, so this might stop working at some point
     let popularity = CorrelationSeries {
         name: "Popularity",
         x_axis_name: "Popularity",
