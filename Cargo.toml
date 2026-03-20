@@ -10,7 +10,6 @@ edition = "2024"
 charming = { version = "0.6.0", optional = true }
 dioxus = { version = "0.7.1", features = ["fullstack", "router"] }
 dioxus-sdk-time = "0.7.0"
-futures = { version = "0.3.32", default-features = false, optional = true }
 rspotify = { git = "https://github.com/jullanggit/rspotify", default-features = false, features = [
   "cli",
   "client-reqwest",
@@ -35,7 +34,6 @@ mobile = ["dioxus/mobile"]
 # The feature that are only required for the server = ["dioxus/server"] build target should be optional and only enabled in the server = ["dioxus/server"] feature
 server = [
   "dep:charming",
-  "dep:futures",
   "dep:rspotify",
   "dep:rspotify-http",
   "dep:tokio",

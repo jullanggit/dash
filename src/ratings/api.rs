@@ -1,16 +1,18 @@
 use dioxus::prelude::*;
 use dioxus_sdk_time::use_interval;
 #[cfg(feature = "server")]
-use futures::StreamExt;
-#[cfg(feature = "server")]
 use rspotify::{
-    AuthCodeSpotify, ClientError, Config, Credentials, OAuth,
+    AuthCodeSpotify, ClientError, ClientResult, Config, Credentials, OAuth,
     prelude::{BaseClient, OAuthClient},
     scopes,
 };
+#[cfg(feature = "server")]
+use rspotify_model::Page;
 use rspotify_model::{
     CurrentPlaybackContext, FullTrack, PlayableItem, PlaylistItem, SimplifiedPlaylist, TrackId,
 };
+#[cfg(feature = "server")]
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, env::home_dir, sync::OnceLock};
 use time::{Date, Duration, UtcDateTime};
@@ -69,16 +71,17 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
 /// The `in_mem_cache` and `last_fetched` are separated, to allow for quick cache retrieval even while the value is being updated.
 /// `in_mem_cache` is only None before the first initialization.
 #[cfg(feature = "server")]
-async fn refreshing<T, F>(
+async fn refreshing<T, F, Fut>(
     f: F,
     in_mem_cache: &'static RwLock<Option<T>>,
     last_fetched: &'static Mutex<UtcDateTime>,
     interval: time::Duration,
+    name: &str,
 ) -> T
 where
-    T: Clone + Serialize + for<'a> Deserialize<'a> + Send + Sync,
-    F: AsyncFn(Option<T>) -> T + Send + 'static,
-    for<'a> F::CallRefFuture<'a>: Send,
+    T: Clone + Serialize + DeserializeOwned + Send + Sync,
+    F: Fn(Option<T>) -> Fut + Send + 'static,
+    Fut: Future<Output = T> + Send + 'static,
 {
     let now = UtcDateTime::now();
 
@@ -96,7 +99,7 @@ where
             let write_mem_cache = async move |value: T| *in_mem_cache.write().await = Some(value);
 
             let disk_cache_path = home_dir().map(|mut path| {
-                path.push(format!(".cache/dash/{}.json", stringify!($fn_name)));
+                path.push(format!(".cache/dash/{name}.json"));
                 path
             });
             let disk_cache_path_clone = disk_cache_path.clone();
@@ -181,7 +184,7 @@ macro_rules! refreshing {
 
         #[cfg(feature = "server")]
         pub async fn ${ concat($fn_name, _server) }() -> $return {
-            refreshing($closure, &$const, &${ concat($const, _LAST_FETCH) }, $interval).await
+            refreshing($closure, &$const, &${ concat($const, _LAST_FETCH) }, $interval, stringify!($fn_name)).await
         }
 
         /// Always returns Ok(value) on the server
@@ -211,60 +214,38 @@ macro_rules! refreshing {
 refreshing!(
     rating_playlists,
     Vec<(f32, SimplifiedPlaylist)>,
-    async |previous| {
+    async |_previous| {
         let spotify = spotify().await;
         let mut playlists = Vec::new();
 
         println!("Getting rating playlists");
 
-        let mut callback = |playlist: SimplifiedPlaylist| {
-            if let Ok(rating) = playlist.name.parse::<f32>()
-                && (0.0..=5.0).contains(&rating)
-            {
-                if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
-                    panic!("Rating folder already present")
-                } else {
-                    playlists.push((rating, playlist.clone()))
-                };
+        let page_results = paginate_retrying(move |offset| {
+            let spotify = spotify.clone();
+            async move {
+                spotify
+                    .current_user_playlists_manual(None, Some(offset))
+                    .await
             }
-        };
+        })
+        .await;
 
-        let mut offset = 0;
-        loop {
-            let page = spotify
-                .current_user_playlists_manual(None, Some(offset))
-                .await;
-            // retry on too many requests error, log and ignore all others
-            match page {
+        for page_result in page_results {
+            match page_result {
                 Ok(page) => {
-                    offset += page.items.len() as u32;
-                    for item in page.items {
-                        callback(item);
-                    }
-                    if page.next.is_none() {
-                        break;
-                    }
-                }
-                Err(ClientError::Http(http)) => match *http {
-                    rspotify_http::HttpError::StatusCode(response) => {
-                        let code = response.status().as_u16();
-                        if code == 429 {
-                            let retry_after = response
-                                .headers()
-                                .iter()
-                                .find(|(name, _)| name.as_str() == "retry-after")
-                                .and_then(|(_, value)| value.to_str().ok())
-                                .map(|str| str.parse().unwrap_or(60));
-                            if let Some(after) = retry_after {
-                                // wait for retry-after, retry in the next loop, as offset didnt get incremented
-                                println!("Retrying after {after} seconds");
-                                sleep(std::time::Duration::from_secs(after)).await;
-                            }
+                    for playlist in page.items {
+                        if let Ok(rating) = playlist.name.parse::<f32>()
+                            && (0.0..=5.0).contains(&rating)
+                        {
+                            if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
+                                panic!("Rating folder already present")
+                            } else {
+                                playlists.push((rating, playlist.clone()))
+                            };
                         }
                     }
-                    other => eprintln!("Error getting page: {other}"),
-                },
-                Err(other) => eprintln!("Error getting page: {other}"),
+                }
+                Err(e) => eprintln!("Error getting playlist page: {e}"),
             }
         }
 
@@ -273,6 +254,57 @@ refreshing!(
     RATING_PLAYLISTS,
     Duration::seconds(1)
 );
+
+#[cfg(feature = "server")]
+async fn paginate_retrying<F, Fut, T>(f: F) -> Vec<ClientResult<Page<T>>>
+where
+    F: Fn(u32) -> Fut,
+    Fut: Future<Output = ClientResult<Page<T>>>,
+    T: DeserializeOwned,
+{
+    // rspotify's paginate() function streams these, but this is not really necessary here
+    let mut out = Vec::new();
+
+    let mut offset = 0;
+    loop {
+        let page = f(offset).await;
+        let mut end = false;
+        // update housekeeping on Ok, retry on too many requests Err, pass anything else on to `callback`
+        match page {
+            Ok(ref page) => {
+                offset += page.items.len() as u32;
+                end = page.next.is_none();
+            }
+            Err(ClientError::Http(ref http)) => match http.as_ref() {
+                rspotify_http::HttpError::StatusCode(response) => {
+                    let code = response.status().as_u16();
+                    if code == 429 {
+                        let retry_after = response
+                            .headers()
+                            .iter()
+                            .find(|(name, _)| name.as_str() == "retry-after")
+                            .and_then(|(_, value)| value.to_str().ok())
+                            .map(|str| str.parse().unwrap_or(60));
+                        if let Some(after) = retry_after {
+                            // wait for retry-after, retry in the next loop, as offset didnt get incremented
+                            println!("Retrying {} after {after} seconds", response.url());
+                            sleep(std::time::Duration::from_secs(after)).await;
+                            continue;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+
+        out.push(page);
+        if end {
+            break;
+        }
+    }
+    out
+}
 
 /// Contains all analyzations derived from `rating_history` and the providing track
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -297,7 +329,7 @@ pub type AnalyzedTracks = Vec<(FullTrack, TrackAnalyzation)>;
 refreshing!(
     ratings,
     Analyzation,
-    async |previous| {
+    async |_previous| {
         let spotify = spotify().await;
         let playlists = rating_playlists()
             .await
@@ -307,27 +339,55 @@ refreshing!(
         println!("Getting ratings");
 
         for (rating, playlist) in playlists {
-            let mut stream = spotify.playlist_items(playlist.id, None, None);
-            while let Some(item) = stream.next().await {
-                match item {
-                    Ok(PlaylistItem {
-                        added_at: Some(added_at),
-                        item: Some(PlayableItem::Track(item)),
-                        ..
-                    }) => {
-                        let entry = match ratings.iter_mut().find_map(|(s_track, analyzation)| {
-                            (*s_track == item).then_some(analyzation)
-                        }) {
-                            Some(ratings) => ratings,
-                            None => &mut ratings.push_mut((item, TrackAnalyzation::default())).1,
-                        };
+            let page_results = paginate_retrying(move |offset| {
+                let spotify = spotify.clone();
+                let id = playlist.id.clone();
+                async move {
+                    spotify
+                        .playlist_items_manual(id, None, None, None, Some(offset))
+                        .await
+                }
+            })
+            .await;
 
-                        entry.rating_history.push((
-                            UtcDateTime::from_unix_timestamp(added_at.timestamp()).unwrap(),
-                            rating,
-                        ));
+            for page_result in page_results {
+                match page_result {
+                    Ok(page) => {
+                        for item in page.items {
+                            match item {
+                                PlaylistItem {
+                                    added_at: Some(added_at),
+                                    item: Some(PlayableItem::Track(item)),
+                                    ..
+                                } => {
+                                    let entry = match ratings.iter_mut().find_map(
+                                        |(s_track, analyzation)| {
+                                            (*s_track == item).then_some(analyzation)
+                                        },
+                                    ) {
+                                        Some(ratings) => ratings,
+                                        None => {
+                                            &mut ratings
+                                                .push_mut((item, TrackAnalyzation::default()))
+                                                .1
+                                        }
+                                    };
+
+                                    entry.rating_history.push((
+                                        UtcDateTime::from_unix_timestamp(added_at.timestamp())
+                                            .unwrap(),
+                                        rating,
+                                    ));
+                                }
+                                other => {
+                                    eprintln!(
+                                        "Unexpected format for rating playlist entry: {other:?}"
+                                    )
+                                }
+                            }
+                        }
                     }
-                    other => eprintln!("Unexpected format for rating playlist entry: {other:?}"),
+                    Err(e) => eprintln!("Failed to get playlist item page: {e}"),
                 }
             }
         }
@@ -444,7 +504,7 @@ fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
 refreshing!(
     playback_state,
     Option<CurrentPlaybackContext>,
-    async |previous| {
+    async |_previous| {
         let spotify = spotify().await;
         spotify
             .current_playback(None, None::<[_; 0]>)
