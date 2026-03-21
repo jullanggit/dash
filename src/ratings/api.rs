@@ -252,7 +252,7 @@ refreshing!(
         playlists
     },
     RATING_PLAYLISTS,
-    Duration::seconds(1)
+    Duration::minutes(5)
 );
 
 #[cfg(feature = "server")]
@@ -395,7 +395,7 @@ refreshing!(
         analyze(ratings)
     },
     RATINGS,
-    Duration::seconds(1)
+    Duration::minutes(1)
 );
 
 // TODO: make this configurable
@@ -505,6 +505,8 @@ refreshing!(
     playback_state,
     Option<CurrentPlaybackContext>,
     async |_previous| {
+        println!("Getting playback state");
+
         let spotify = spotify().await;
         spotify
             .current_playback(None, None::<[_; 0]>)
