@@ -3,7 +3,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
 };
 
-use crate::ratings::Analyzation;
+use crate::ratings::analyze::{Analyzation, TrackAnalyzation};
 use charming::{
     Chart,
     component::{Axis, Legend, Title},
@@ -33,8 +33,6 @@ pub fn rating_per_song(data: Analyzation) {
 }
 
 pub fn canonical_rating_distribution(data: &Analyzation) -> Chart {
-    use crate::ratings::TrackAnalyzation;
-
     const BIN_SIZE: f32 = 0.25;
     const NUM_BINS: usize = (5. / BIN_SIZE) as usize;
     let mut bins = [0_i64; NUM_BINS];

@@ -1,0 +1,128 @@
+use std::collections::BTreeMap;
+
+use rspotify_model::FullTrack;
+use serde::{Deserialize, Serialize};
+use time::{Date, Duration, UtcDateTime};
+
+// TODO: make this configurable
+pub const DEFAULT_RATING: f32 = 2.5;
+
+/// Contains all analyzations derived from `rating_history` and the providing track
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct TrackAnalyzation {
+    /// sorted by ascending date
+    pub rating_history: Vec<(UtcDateTime, f32)>,
+    pub canonical_rating_history: Vec<(UtcDateTime, f32)>,
+    pub canonical_rating: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Analyzation {
+    pub tracks: AnalyzedTracks,
+    /// sorted by ascending date
+    pub average_rating_per_day: Vec<(Date, f32)>,
+    pub num_ratings_history: Vec<(UtcDateTime, u32)>,
+    pub num_rated_tracks_history: Vec<(UtcDateTime, u32)>,
+}
+
+pub type AnalyzedTracks = Vec<(FullTrack, TrackAnalyzation)>;
+
+/// Build analyzation based on tracks and rating histories
+pub fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
+    println!("Analyzing ratings");
+
+    fn canonical_rating(rating_history: impl IntoIterator<Item = (f32, UtcDateTime)>) -> f32 {
+        const HALF_LIFE: Duration = Duration::weeks(26);
+
+        let now = UtcDateTime::now();
+        let (weighted_sum, weight_sum) = rating_history.into_iter().fold(
+            (0., 0.),
+            |(weighted_sum, weight_sum), (rating, time)| {
+                let delta = now - time;
+                let weight = 0.5_f64.powf(delta / HALF_LIFE) as f32;
+
+                (weighted_sum + rating * weight, weight_sum + weight)
+            },
+        );
+
+        weighted_sum / weight_sum
+    }
+
+    // track analyzations
+    for (_, analyzation) in &mut tracks {
+        analyzation
+            .rating_history
+            .sort_unstable_by_key(|&(time, _)| time);
+
+        analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
+            .map(|i| {
+                (
+                    analyzation.rating_history[i - 1].0,
+                    canonical_rating(
+                        analyzation
+                            .rating_history
+                            .iter()
+                            .take(i)
+                            .map(|&(time, rating)| (rating, time)),
+                    ),
+                )
+            })
+            .collect();
+        analyzation.canonical_rating = analyzation
+            .canonical_rating_history
+            .last()
+            .map(|(_, rating)| *rating)
+            .unwrap_or(DEFAULT_RATING);
+    }
+
+    // cross-track analyzations
+    let average_rating_per_day = {
+        let ratings_per_day: BTreeMap<Date, Vec<f32>> = tracks
+            .iter()
+            .flat_map(|(_, track_analyzation)| track_analyzation.rating_history.iter())
+            .fold(BTreeMap::new(), |mut acc, (date_time, rating)| {
+                let date = date_time.date();
+                acc.entry(date).or_default().push(*rating);
+                acc
+            });
+
+        ratings_per_day
+            .iter()
+            .map(|(&date, ratings)| {
+                let average_rating =
+                    ratings.iter().map(f32::clone).sum::<f32>() / ratings.len() as f32;
+                (date, average_rating)
+            })
+            .collect()
+    };
+
+    let (num_ratings_history, num_rated_tracks_history) = {
+        let rating_times = tracks
+            .iter()
+            .flat_map(|(_, data)| data.rating_history.iter().map(|(time, _)| time))
+            .collect::<Vec<_>>();
+
+        let first_rating_times = tracks
+            .iter()
+            .filter_map(|(_, data)| data.rating_history.iter().map(|(time, _)| time).min())
+            .collect::<Vec<_>>();
+
+        let history = |mut times: Vec<&UtcDateTime>| {
+            times.sort_unstable();
+            times
+                .iter()
+                .enumerate()
+                .map(|(count, &&date_time)| (date_time, count as u32))
+                .collect()
+        };
+
+        (history(rating_times), history(first_rating_times))
+    };
+
+    Analyzation {
+        tracks,
+        average_rating_per_day,
+        num_ratings_history,
+        num_rated_tracks_history,
+    }
+}
