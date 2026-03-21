@@ -79,7 +79,7 @@ caching!(
 
         println!("Getting rating playlists");
 
-        let page_results = paginate_retrying(move |offset| {
+        let response = paginate_retrying(move |offset| {
             let spotify = spotify.clone();
             async move {
                 spotify
@@ -89,23 +89,21 @@ caching!(
         })
         .await;
 
-        for page_result in page_results {
-            match page_result {
-                Ok(page) => {
-                    for playlist in page.items {
-                        if let Ok(rating) = playlist.name.parse::<f32>()
-                            && (0.0..=5.0).contains(&rating)
-                        {
-                            if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
-                                panic!("Rating folder already present")
-                            } else {
-                                playlists.push((rating, playlist.clone()))
-                            };
-                        }
+        match response {
+            Ok(response) => {
+                for playlist in response {
+                    if let Ok(rating) = playlist.name.parse::<f32>()
+                        && (0.0..=5.0).contains(&rating)
+                    {
+                        if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
+                            panic!("Rating folder already present")
+                        } else {
+                            playlists.push((rating, playlist.clone()))
+                        };
                     }
                 }
-                Err(e) => eprintln!("Error getting playlist page: {e}"),
             }
+            Err(e) => eprintln!("Error getting playlists: {e}"),
         }
 
         playlists
@@ -114,8 +112,10 @@ caching!(
     Duration::minutes(5)
 );
 
+/// Paginates the given function, retrying any too-many-request errors.
+/// Returns early if any other errors are encountered.
 #[cfg(feature = "server")]
-async fn paginate_retrying<F, Fut, T>(f: F) -> Vec<ClientResult<Page<T>>>
+async fn paginate_retrying<F, Fut, T>(f: F) -> ClientResult<Vec<T>>
 where
     F: Fn(u32) -> Fut,
     Fut: Future<Output = ClientResult<Page<T>>>,
@@ -126,20 +126,17 @@ where
 
     let mut offset = 0;
     loop {
-        let page = retrying(&f, offset).await;
+        let mut page = retrying(&f, offset).await?;
 
-        let mut end = false;
-        if let Ok(ref page) = page {
-            offset += page.items.len() as u32;
-            end = page.next.is_none();
-        }
+        offset += page.items.len() as u32;
 
-        out.push(page);
-        if end {
+        out.append(&mut page.items);
+
+        if page.next.is_none() {
             break;
         }
     }
-    out
+    Ok(out)
 }
 
 /// Retries `f` if it got a too-many-requests error.
@@ -193,7 +190,7 @@ caching!(
         println!("Getting ratings");
 
         for (rating, playlist) in playlists {
-            let page_results = paginate_retrying(move |offset| {
+            let items = paginate_retrying(move |offset| {
                 let spotify = spotify.clone();
                 let id = playlist.id.clone();
                 async move {
@@ -204,21 +201,19 @@ caching!(
             })
             .await;
 
-            for page_result in page_results {
-                match page_result {
-                    Ok(page) => {
-                        for item in page.items {
-                            match item {
-                                PlaylistItem {
-                                    added_at: Some(added_at),
-                                    item: Some(PlayableItem::Track(item)),
-                                    ..
-                                } => {
-                                    let entry = match ratings.iter_mut().find_map(
-                                        |(s_track, analyzation)| {
-                                            (*s_track == item).then_some(analyzation)
-                                        },
-                                    ) {
+            match items {
+                Ok(items) => {
+                    for item in items {
+                        match item {
+                            PlaylistItem {
+                                added_at: Some(added_at),
+                                item: Some(PlayableItem::Track(item)),
+                                ..
+                            } => {
+                                let entry =
+                                    match ratings.iter_mut().find_map(|(s_track, analyzation)| {
+                                        (*s_track == item).then_some(analyzation)
+                                    }) {
                                         Some(ratings) => ratings,
                                         None => {
                                             &mut ratings
@@ -227,22 +222,18 @@ caching!(
                                         }
                                     };
 
-                                    entry.rating_history.push((
-                                        UtcDateTime::from_unix_timestamp(added_at.timestamp())
-                                            .unwrap(),
-                                        rating,
-                                    ));
-                                }
-                                other => {
-                                    eprintln!(
-                                        "Unexpected format for rating playlist entry: {other:?}"
-                                    )
-                                }
+                                entry.rating_history.push((
+                                    UtcDateTime::from_unix_timestamp(added_at.timestamp()).unwrap(),
+                                    rating,
+                                ));
+                            }
+                            other => {
+                                eprintln!("Unexpected format for rating playlist entry: {other:?}")
                             }
                         }
                     }
-                    Err(e) => eprintln!("Failed to get playlist item page: {e}"),
                 }
+                Err(e) => eprintln!("Failed to get playlist items: {e}"),
             }
         }
 
