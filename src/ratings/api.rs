@@ -183,17 +183,21 @@ macro_rules! refreshing {
         #[cfg(feature = "server")]
         static ${ concat($const, _LAST_FETCH) }: Mutex<UtcDateTime> = Mutex::const_new(UtcDateTime::MIN); // initialize to min so the first access is always identified as after it
 
+        /// Server-only function, returns output directly
         #[cfg(feature = "server")]
         pub async fn ${ concat($fn_name, _server) }() -> $return {
             refreshing($closure, &$const, &${ concat($const, _LAST_FETCH) }, $interval, stringify!($fn_name)).await
         }
 
-        /// Always returns Ok(value) on the server
+        /// Client-Server function, returns Result for transport errors
         #[server]
         pub async fn $fn_name() -> Result<$return> {
             Ok(${ concat($fn_name, _server) }().await)
         }
 
+        /// Client function, returns a Signal that updates every interval (
+        #[doc = stringify!($interval)]
+        /// )
         pub fn ${ concat(use_, $fn_name) }() -> Signal<Option<$return>> {
             let mut state = use_signal(|| None);
 
@@ -212,6 +216,7 @@ macro_rules! refreshing {
         }
     };
 }
+
 refreshing!(
     rating_playlists,
     Vec<(f32, SimplifiedPlaylist)>,
@@ -313,9 +318,7 @@ refreshing!(
     Analyzation,
     async |_previous| {
         let spotify = spotify().await;
-        let playlists = rating_playlists()
-            .await
-            .expect("Never errors on server-to-server calls");
+        let playlists = rating_playlists_server().await;
         let mut ratings = Vec::new();
 
         println!("Getting ratings");
@@ -400,7 +403,7 @@ refreshing!(
 // TODO: maybe return None if there are no ratings yet and display that in the ui
 #[server]
 pub async fn rating(track_id: TrackId<'static>) -> Result<f32> {
-    let ratings = ratings().await.expect("Server-to-server");
+    let ratings = ratings_server().await;
 
     Ok(ratings
         .tracks
