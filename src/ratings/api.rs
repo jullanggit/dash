@@ -273,35 +273,12 @@ where
 
     let mut offset = 0;
     loop {
-        let page = f(offset).await;
+        let page = retrying(&f, offset).await;
+
         let mut end = false;
-        // update housekeeping on Ok, retry on too many requests Err, pass anything else on to `callback`
-        match page {
-            Ok(ref page) => {
-                offset += page.items.len() as u32;
-                end = page.next.is_none();
-            }
-            Err(ClientError::Http(ref http)) => match http.as_ref() {
-                rspotify_http::HttpError::StatusCode(response) => {
-                    let code = response.status().as_u16();
-                    if code == 429 {
-                        let retry_after = response
-                            .headers()
-                            .iter()
-                            .find(|(name, _)| name.as_str() == "retry-after")
-                            .and_then(|(_, value)| value.to_str().ok())
-                            .map(|str| str.parse().unwrap_or(60));
-                        if let Some(after) = retry_after {
-                            // wait for retry-after, retry in the next loop, as offset didnt get incremented
-                            println!("Retrying {} after {after} seconds", response.url());
-                            sleep(std::time::Duration::from_secs(after)).await;
-                            continue;
-                        }
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
+        if let Ok(ref page) = page {
+            offset += page.items.len() as u32;
+            end = page.next.is_none();
         }
 
         out.push(page);
@@ -312,6 +289,45 @@ where
     out
 }
 
+/// Retries `f` if it got a too-many-requests error.
+/// Suspends for the duration requested by the spotify API, which may be a long period of time.
+#[cfg(feature = "server")]
+async fn retrying<F, Args, Fut, T>(f: F, args: Args) -> ClientResult<T>
+where
+    F: Fn(Args) -> Fut,
+    Args: Clone,
+    Fut: Future<Output = ClientResult<T>>,
+    T: DeserializeOwned,
+{
+    loop {
+        let res = f(args.clone()).await;
+        match res {
+            Err(ClientError::Http(ref http)) => match http.as_ref() {
+                rspotify_http::HttpError::StatusCode(response) => {
+                    let code = response.status().as_u16();
+                    if code == 429 {
+                        let retry_after = response
+                            .headers()
+                            .iter()
+                            .find(|(name, _)| name.as_str() == "retry-after")
+                            .and_then(|(_, value)| value.to_str().ok())
+                            .and_then(|str| str.parse().ok())
+                            .unwrap_or(60);
+
+                        // wait for retry-after, retry in the next loop, as offset didnt get incremented
+                        println!("Retrying {} after {retry_after} seconds", response.url());
+                        sleep(std::time::Duration::from_secs(retry_after)).await;
+                        continue;
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+
+        return res;
+    }
+}
 
 refreshing!(
     ratings,
@@ -390,11 +406,13 @@ refreshing!(
         println!("Getting playback state");
 
         let spotify = spotify().await;
-        spotify
-            .current_playback(None, None::<[_; 0]>)
-            .await
-            .ok()
-            .flatten()
+        retrying(
+            move |_| async move { spotify.current_playback(None, None::<[_; 0]>).await },
+            (),
+        )
+        .await
+        .ok()
+        .flatten()
     },
     PLAYBACK_STATE,
     Duration::seconds(2)
