@@ -40,6 +40,8 @@ where
         (Some(cached), Ok((false, _))) | (Some(cached), Err(_)) => cached,
         // no other request is currently updating the value, and it needs updating; update it
         (in_mem_cached, Ok((true, guard))) => {
+            use tokio::sync::MutexGuard;
+
             let write_mem_cache = async move |value: T| *in_mem_cache.write().await = Some(value);
 
             let disk_cache_path = home_dir().map(|mut path| {
@@ -56,6 +58,11 @@ where
                     .ok()
             };
 
+            let update_and_drop_last_fetched = move |mut guard: MutexGuard<_>| {
+                *guard = UtcDateTime::now();
+                drop(guard);
+            };
+
             match in_mem_cached {
                 // fetch and write new value to cache in the background
                 Some(cached) => {
@@ -64,7 +71,7 @@ where
                         write_mem_and_disk_cache(f(Some(clone)).await).await;
 
                         // hold lock until all caches are updated
-                        drop(guard);
+                        update_and_drop_last_fetched(guard);
                     });
 
                     cached
@@ -86,7 +93,7 @@ where
                                 write_mem_and_disk_cache(f(Some(clone)).await).await;
 
                                 // hold lock until all caches are updated
-                                drop(guard);
+                                update_and_drop_last_fetched(guard);
                             });
 
                             cached
@@ -97,7 +104,7 @@ where
                             write_mem_and_disk_cache(new_value.clone()).await;
 
                             // hold lock until all caches are updated
-                            drop(guard);
+                            update_and_drop_last_fetched(guard);
 
                             new_value
                         }
