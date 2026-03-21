@@ -72,7 +72,7 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
 /// The `in_mem_cache` and `last_fetched` are separated, to allow for quick cache retrieval even while the value is being updated.
 /// `in_mem_cache` is only None before the first initialization.
 #[cfg(feature = "server")]
-async fn refreshing<T, F, Fut>(
+async fn caching<T, F, Fut>(
     f: F,
     in_mem_cache: &'static RwLock<Option<T>>,
     last_fetched: &'static Mutex<UtcDateTime>,
@@ -176,7 +176,8 @@ where
     }
 }
 
-macro_rules! refreshing {
+/// Set up statics and helper functions for caching.
+macro_rules! caching {
     ($fn_name:ident, $return:ty, $closure:expr, $const:ident, $interval:expr) => {
         #[cfg(feature = "server")]
         static $const: RwLock<Option<$return>> = RwLock::const_new(None);
@@ -186,7 +187,7 @@ macro_rules! refreshing {
         /// Server-only function, returns output directly
         #[cfg(feature = "server")]
         pub async fn ${ concat($fn_name, _server) }() -> $return {
-            refreshing($closure, &$const, &${ concat($const, _LAST_FETCH) }, $interval, stringify!($fn_name)).await
+            caching($closure, &$const, &${ concat($const, _LAST_FETCH) }, $interval, stringify!($fn_name)).await
         }
 
         /// Client-Server function, returns Result for transport errors
@@ -217,7 +218,7 @@ macro_rules! refreshing {
     };
 }
 
-refreshing!(
+caching!(
     rating_playlists,
     Vec<(f32, SimplifiedPlaylist)>,
     async |_previous| {
@@ -329,7 +330,7 @@ where
     }
 }
 
-refreshing!(
+caching!(
     ratings,
     Analyzation,
     async |_previous| {
@@ -399,7 +400,7 @@ refreshing!(
     Duration::minutes(1)
 );
 
-refreshing!(
+caching!(
     playback_state,
     Option<CurrentPlaybackContext>,
     async |_previous| {
