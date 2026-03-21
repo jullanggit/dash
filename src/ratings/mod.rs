@@ -7,3 +7,5 @@ mod api;
 pub use api::*;
 
 mod analyze;
+
+mod caching;
