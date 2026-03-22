@@ -267,7 +267,7 @@ caching!(
         analyze(ratings)
     },
     RATINGS,
-    Duration::minutes(1)
+    Duration::seconds(10)
 );
 
 caching!(
@@ -286,7 +286,7 @@ caching!(
         .flatten()
     },
     PLAYBACK_STATE,
-    Duration::seconds(2)
+    Duration::seconds(1)
 );
 
 // TODO: maybe return None if there are no ratings yet and display that in the ui
