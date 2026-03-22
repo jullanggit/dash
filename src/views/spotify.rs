@@ -1,23 +1,23 @@
-use crate::ratings::{rating as fetch_rating, use_playback_state};
+use crate::ratings::{caching::use_server_fn, rating as fetch_rating, use_playback_state};
 use dioxus::prelude::*;
 use rspotify_model::{CurrentPlaybackContext, FullTrack, PlayableItem};
+use time::Duration;
 
 #[component]
 pub fn Spotify() -> Element {
-    let charts = use_server_future(move || async move { charts().await })?;
     let playback_state = use_playback_state();
+    let charts = use_server_fn(charts, Duration::MINUTE);
     rsx!(
         Player { playback_state }
         h2 { "Charts" }
         match &*charts.read_unchecked() {
-            Some(Ok(charts)) => {
+            Some(charts) => {
                 rsx! {
                     for chart in charts {
                         iframe { width: 1920, height: 1080, srcdoc: "{chart}" }
                     }
                 }
             }
-            Some(Err(e)) => rsx! { "Error loading charts: {e}" },
             None => rsx! { "Loading charts..." },
         }
     )
@@ -83,16 +83,14 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
 async fn charts() -> Result<[String; 5]> {
     use crate::ratings::{
         average_rating_per_day, canonical_rating_correlations, canonical_rating_distribution,
-        num_ratings_history, ratings, song_canonical_rating_histories,
+        num_ratings_history, ratings, ratings_server, song_canonical_rating_histories,
     };
 
     use charming::HtmlRenderer;
 
     let renderer = HtmlRenderer::new("Renderer", 1920, 1080);
 
-    let analyzation = ratings()
-        .await
-        .expect("Never errors on server-to-server calls");
+    let analyzation = ratings_server().await;
 
     Ok([
         canonical_rating_distribution,

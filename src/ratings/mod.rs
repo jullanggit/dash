@@ -6,6 +6,6 @@ pub use visualize::*;
 mod api;
 pub use api::*;
 
-mod analyze;
+pub mod analyze;
 
-mod caching;
+pub mod caching;

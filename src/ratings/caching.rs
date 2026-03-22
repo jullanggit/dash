@@ -1,5 +1,6 @@
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use dioxus::prelude::*;
+use dioxus_sdk_time::use_interval;
+use serde::{Serialize, de::DeserializeOwned};
 use std::env::home_dir;
 use time::UtcDateTime;
 #[cfg(feature = "server")]
@@ -129,42 +130,55 @@ where
 /// Set up statics and helper functions for caching.
 #[macro_export]
 macro_rules! caching {
-        ($fn_name:ident, $return:ty, $closure:expr, $const:ident, $interval:expr) => {
-            #[cfg(feature = "server")]
-            static $const: RwLock<Option<$return>> = RwLock::const_new(None);
-            #[cfg(feature = "server")]
-            static ${ concat($const, _LAST_FETCH) }: Mutex<UtcDateTime> = Mutex::const_new(UtcDateTime::MIN); // initialize to min so the first access is always identified as after it
+    ($fn_name:ident, $return:ty, $closure:expr, $const:ident, $interval:expr) => {
+        #[cfg(feature = "server")]
+        static $const: RwLock<Option<$return>> = RwLock::const_new(None);
+        #[cfg(feature = "server")]
+        static ${ concat($const, _LAST_FETCH) }: Mutex<UtcDateTime> = Mutex::const_new(UtcDateTime::MIN); // initialize to min so the first access is always identified as after it
 
-            /// Server-only function, returns output directly
-            #[cfg(feature = "server")]
-            pub async fn ${ concat($fn_name, _server) }() -> $return {
-                caching($closure, &$const, &${ concat($const, _LAST_FETCH) }, $interval, stringify!($fn_name)).await
-            }
+        /// Server-only function, returns output directly
+        #[cfg(feature = "server")]
+        pub async fn ${ concat($fn_name, _server) }() -> $return {
+            caching($closure, &$const, &${ concat($const, _LAST_FETCH) }, $interval, stringify!($fn_name)).await
+        }
 
-            /// Client-Server function, returns Result for transport errors
-            #[server]
-            pub async fn $fn_name() -> Result<$return> {
-                Ok(${ concat($fn_name, _server) }().await)
-            }
+        /// Client-Server function, returns Result for transport errors
+        #[server]
+        pub async fn $fn_name() -> Result<$return> {
+            Ok(${ concat($fn_name, _server) }().await)
+        }
 
-            /// Client function, returns a Signal that updates every interval (
-            #[doc = stringify!($interval)]
-            /// )
-            pub fn ${ concat(use_, $fn_name) }() -> Signal<Option<$return>> {
-                let mut state = use_signal(|| None);
+        /// Client function, returns a Signal that updates every interval (
+        #[doc = stringify!($interval)]
+        /// )
+        pub fn ${ concat(use_, $fn_name) }() -> Signal<Option<$return>> {
+            use_server_fn($fn_name, $interval)
+        }
+    };
+}
 
-                let body = move || async move {
-                    let new_state = $fn_name().await;
+pub fn use_server_fn<F, T>(f: F, interval: time::Duration) -> Signal<Option<T>>
+where
+    F: AsyncFn() -> Result<T> + 'static + Copy,
+    T: PartialEq + 'static,
+{
+    let mut state = use_signal(|| None);
 
-                    if let Ok(new_state) = new_state && state.read().as_ref() != Some(&new_state) {
-                        state.set(Some(new_state));
-                    }
-                };
+    let body = move || async move {
+        let new_state = f().await;
 
-                use_future(move || body());
-                use_interval(std::time::Duration::from_nanos($interval.whole_nanoseconds() as u64), move |_| body());
+        if let Ok(new_state) = new_state
+            && state.read().as_ref() != Some(&new_state)
+        {
+            state.set(Some(new_state));
+        }
+    };
 
-                state
-            }
-        };
-    }
+    use_future(move || body());
+    use_interval(
+        std::time::Duration::from_nanos(interval.whole_nanoseconds() as u64),
+        move |_| body(),
+    );
+
+    state
+}

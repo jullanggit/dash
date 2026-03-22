@@ -3,7 +3,11 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
 };
 
-use crate::ratings::analyze::{Analyzation, TrackAnalyzation};
+use crate::ratings::{
+    analyze::{Analyzation, TrackAnalyzation},
+    caching::use_server_fn,
+    ratings_server,
+};
 use charming::{
     Chart,
     component::{Axis, Legend, Title},
@@ -14,8 +18,9 @@ use charming::{
     },
     series::Line,
 };
+use dioxus::prelude::*;
 
-use time::{Date, Month, UtcDateTime};
+use time::{Date, Duration, Month, UtcDateTime};
 
 pub fn rating_per_song(data: Analyzation) {
     let mut vec = data

@@ -2,7 +2,10 @@
 use crate::ratings::caching::caching;
 use crate::{
     caching,
-    ratings::analyze::{Analyzation, DEFAULT_RATING, TrackAnalyzation, analyze},
+    ratings::{
+        analyze::{Analyzation, DEFAULT_RATING, TrackAnalyzation, analyze},
+        caching::use_server_fn,
+    },
 };
 use dioxus::prelude::*;
 use dioxus_sdk_time::use_interval;
