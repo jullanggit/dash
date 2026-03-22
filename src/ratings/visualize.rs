@@ -10,7 +10,7 @@ use crate::ratings::{
     analyze::{Analyzation, TrackAnalyzation},
     artist_genres,
     caching::use_server_fn,
-    ratings_server,
+    genres, ratings_server,
 };
 use charming::{
     Chart,
@@ -458,22 +458,15 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
     chart
 }
 
-pub fn genre_proportions(data: &Analyzation, genres: &ArtistGenres) -> Chart {
+pub fn genre_proportions(data: &Analyzation, artist_genres: &ArtistGenres) -> Chart {
     let mut genre_counts: HashMap<String, (f32, u32)> = HashMap::new();
 
     for (track, analyzation) in &data.tracks {
-        let mut track_genres = HashSet::new();
-        for genre in track
-            .artists
-            .iter()
-            .filter_map(|artist| artist.id.clone().and_then(|id| genres.get(&id)))
-            .flat_map(identity)
-        {
-            if track_genres.insert(genre) {
-                let (acc, num) = genre_counts.entry(genre.clone()).or_insert((0.0, 0));
-                *acc += analyzation.canonical_rating;
-                *num += 1;
-            }
+        let genres = genres(&track.artists, artist_genres);
+        for genre in genres {
+            let (acc, num) = genre_counts.entry(genre.clone()).or_insert((0.0, 0));
+            *acc += analyzation.canonical_rating;
+            *num += 1;
         }
     }
 
@@ -492,6 +485,7 @@ pub fn genre_proportions(data: &Analyzation, genres: &ArtistGenres) -> Chart {
 
     base_chart()
         .title(Title::new().text("Genre Cumulative Rating"))
+        .tooltip(Tooltip::new().trigger(Trigger::Item))
         .series(
             Pie::new()
                 .rose_type(PieRoseType::Radius)

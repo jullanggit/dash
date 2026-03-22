@@ -1,9 +1,11 @@
 use std::iter;
 
 use crate::ratings::{
-    artist_genres, caching::use_server_fn, rating as fetch_rating, use_playback_state,
+    artist_genres, caching::use_server_fn, genres, playback_state, rating as fetch_rating,
+    use_playback_state,
 };
-use dioxus::prelude::*;
+use dioxus::{html::script::r#async, prelude::*};
+use futures::FutureExt;
 use rspotify_model::{CurrentPlaybackContext, FullTrack, PlayableItem};
 use time::Duration;
 
@@ -46,6 +48,19 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
         }
     });
 
+    let genres = use_resource(move || async move {
+        if let Some(Some(CurrentPlaybackContext {
+            item: Some(PlayableItem::Track(FullTrack { ref artists, .. })),
+            ..
+        })) = *playback_state.read()
+            && let Ok(artist_genres) = artist_genres().await
+        {
+            Some(genres(&artists, &artist_genres))
+        } else {
+            None
+        }
+    });
+
     let read = playback_state.read();
     let state = match *read {
         Some(ref state) => state.as_ref(),
@@ -77,6 +92,12 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                     Some(Some(Err(e))) => format!("Error getting rating: {e}"),
                     Some(None) => String::new(),
                     None => "Getting rating...".to_string(),
+                }
+                br {}
+                match &*genres.read() {
+                    Some(Some(genres)) if !genres.is_empty() => format!("Genres: {}", genres.iter().cloned().intersperse(", ".into()).collect::<String>()),
+                    Some(_) => String::new(),
+                    None => "Getting genres...".to_string()
                 }
             }
         }

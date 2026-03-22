@@ -21,7 +21,8 @@ use rspotify::{
 #[cfg(feature = "server")]
 use rspotify_model::Page;
 use rspotify_model::{
-    ArtistId, CurrentPlaybackContext, PlayableItem, PlaylistItem, SimplifiedPlaylist, TrackId,
+    ArtistId, CurrentPlaybackContext, PlayableItem, PlaylistItem, SimplifiedArtist,
+    SimplifiedPlaylist, TrackId,
 };
 use serde::Serialize;
 #[cfg(feature = "server")]
@@ -30,6 +31,7 @@ use serde::de::DeserializeOwned;
 use std::pin::Pin;
 use std::{
     collections::{HashMap, HashSet},
+    convert::identity,
     sync::OnceLock,
 };
 use time::{Duration, UtcDateTime};
@@ -346,4 +348,20 @@ pub async fn rating(track_id: TrackId<'static>) -> Result<f32> {
         .find(|(track, _)| track.id.as_ref() == Some(&track_id))
         .map(|(_, analyzation)| analyzation.canonical_rating)
         .unwrap_or(DEFAULT_RATING))
+}
+
+/// Only returns genres for rated songs
+/// TODO: make it also fetch genres for non-rated songs
+pub fn genres(artists: &[SimplifiedArtist], artist_genres: &ArtistGenres) -> HashSet<String> {
+    let mut genres = HashSet::new();
+
+    for genre in artists
+        .iter()
+        .filter_map(|artist| artist.id.as_ref().and_then(|id| artist_genres.get(id)))
+        .flat_map(identity)
+    {
+        genres.insert(genre.clone());
+    }
+
+    genres
 }
