@@ -16,7 +16,7 @@ pub struct TrackAnalyzation {
     pub canonical_rating: f32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Analyzation {
     pub tracks: AnalyzedTracks,
     /// sorted by ascending date

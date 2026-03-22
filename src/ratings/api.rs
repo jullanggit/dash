@@ -7,6 +7,9 @@ use crate::{
 use dioxus::prelude::*;
 use dioxus_sdk_time::use_interval;
 #[cfg(feature = "server")]
+use futures::Stream;
+use futures::StreamExt;
+#[cfg(feature = "server")]
 use rspotify::{
     AuthCodeSpotify, ClientError, ClientResult, Config, Credentials, OAuth,
     prelude::{BaseClient, OAuthClient},
@@ -20,6 +23,8 @@ use rspotify_model::{
 use serde::Serialize;
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
+#[cfg(feature = "server")]
+use std::pin::Pin;
 use std::sync::OnceLock;
 use time::{Duration, UtcDateTime};
 #[cfg(feature = "server")]
@@ -79,7 +84,7 @@ caching!(
 
         println!("Getting rating playlists");
 
-        let response = paginate_retrying(move |offset| {
+        let mut response = paginate_retrying(move |offset| {
             let spotify = spotify.clone();
             async move {
                 spotify
@@ -89,9 +94,9 @@ caching!(
         })
         .await;
 
-        match response {
-            Ok(response) => {
-                for playlist in response {
+        while let Some(result) = response.next().await {
+            match result {
+                Ok(playlist) => {
                     if let Ok(rating) = playlist.name.parse::<f32>()
                         && (0.0..=5.0).contains(&rating)
                     {
@@ -102,8 +107,8 @@ caching!(
                         };
                     }
                 }
+                Err(e) => eprintln!("Error getting playlists: {e}"),
             }
-            Err(e) => eprintln!("Error getting playlists: {e}"),
         }
 
         playlists
@@ -115,28 +120,29 @@ caching!(
 /// Paginates the given function, retrying any too-many-request errors.
 /// Returns early if any other errors are encountered.
 #[cfg(feature = "server")]
-async fn paginate_retrying<F, Fut, T>(f: F) -> ClientResult<Vec<T>>
+async fn paginate_retrying<F, Fut, T>(f: F) -> Pin<Box<impl Stream<Item = ClientResult<T>>>>
 where
     F: Fn(u32) -> Fut,
     Fut: Future<Output = ClientResult<Page<T>>>,
     T: DeserializeOwned,
 {
-    // rspotify's paginate() function streams these, but this is not really necessary here
-    let mut out = Vec::new();
-
     let mut offset = 0;
-    loop {
-        let mut page = retrying(&f, offset).await?;
+    Box::pin(async_stream::stream! {
+        loop {
+            let page = retrying(&f, offset).await?;
 
-        offset += page.items.len() as u32;
+            offset += page.items.len() as u32;
+            let end = page.next.is_none() || page.items.is_empty();
 
-        out.append(&mut page.items);
+            for item in page.items {
+                yield Ok(item);
+            }
 
-        if page.next.is_none() {
-            break;
+            if end {
+                break;
+            };
         }
-    }
-    Ok(out)
+    })
 }
 
 /// Retries `f` if it got a too-many-requests error.
@@ -182,15 +188,25 @@ where
 caching!(
     ratings,
     Analyzation,
-    async |_previous| {
+    // get ratings. Only re-fetch ratings within the last 15 minutes.
+    async |previous| {
         let spotify = spotify().await;
         let playlists = rating_playlists_server().await;
-        let mut ratings = Vec::new();
+        let mut ratings = previous.unwrap_or_default().tracks;
+
+        // remove any ratings younger than 15 minutes
+        let now = UtcDateTime::now();
+        ratings.retain_mut(|(track, analyzation)| {
+            analyzation
+                .rating_history
+                .retain(|(date_time, rating)| now - Duration::minutes(15) > *date_time);
+            !analyzation.rating_history.is_empty()
+        });
 
         println!("Getting ratings");
 
         for (rating, playlist) in playlists {
-            let items = paginate_retrying(move |offset| {
+            let mut items = paginate_retrying(move |offset| {
                 let spotify = spotify.clone();
                 let id = playlist.id.clone();
                 async move {
@@ -201,39 +217,45 @@ caching!(
             })
             .await;
 
-            match items {
-                Ok(items) => {
-                    for item in items {
-                        match item {
-                            PlaylistItem {
-                                added_at: Some(added_at),
-                                item: Some(PlayableItem::Track(item)),
-                                ..
-                            } => {
-                                let entry =
-                                    match ratings.iter_mut().find_map(|(s_track, analyzation)| {
-                                        (*s_track == item).then_some(analyzation)
-                                    }) {
-                                        Some(ratings) => ratings,
-                                        None => {
-                                            &mut ratings
-                                                .push_mut((item, TrackAnalyzation::default()))
-                                                .1
-                                        }
-                                    };
+            // assumptions:
+            // The first initialization fetches all available items.
+            // Items older than 15 minutes do not change and are not removed. This can be extended to 'no items are ever changed or removed' once all logic has converted to append-only.
+            while let Some(result) = items.next().await {
+                match result {
+                    Ok(item) => match item {
+                        PlaylistItem {
+                            added_at: Some(added_at),
+                            item: Some(PlayableItem::Track(item)),
+                            ..
+                        } => {
+                            let entry =
+                                match ratings.iter_mut().find_map(|(s_track, analyzation)| {
+                                    (*s_track == item).then_some(analyzation)
+                                }) {
+                                    Some(ratings) => ratings,
+                                    None => {
+                                        &mut ratings.push_mut((item, TrackAnalyzation::default())).1
+                                    }
+                                };
 
-                                entry.rating_history.push((
-                                    UtcDateTime::from_unix_timestamp(added_at.timestamp()).unwrap(),
-                                    rating,
-                                ));
-                            }
-                            other => {
-                                eprintln!("Unexpected format for rating playlist entry: {other:?}")
+                            let data = (
+                                UtcDateTime::from_unix_timestamp(added_at.timestamp()).unwrap(),
+                                rating,
+                            );
+
+                            if entry.rating_history.contains(&data) {
+                                // We have arrived at data older than 15 minutes we already have, and which we assume hasn't changed, so we stop fetching here.
+                                break;
+                            } else {
+                                entry.rating_history.push(data);
                             }
                         }
-                    }
+                        other => {
+                            eprintln!("Unexpected format for rating playlist entry: {other:?}")
+                        }
+                    },
+                    Err(e) => eprintln!("Failed to get playlist items: {e}"),
                 }
-                Err(e) => eprintln!("Failed to get playlist items: {e}"),
             }
         }
 
