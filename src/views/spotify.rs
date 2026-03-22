@@ -55,7 +55,11 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
         })) = *playback_state.read()
             && let Ok(artist_genres) = artist_genres().await
         {
-            Some(genres(&artists, &artist_genres))
+            let mut genres = genres(&artists, &artist_genres)
+                .into_iter()
+                .collect::<Vec<_>>();
+            genres.sort();
+            Some(genres)
         } else {
             None
         }
