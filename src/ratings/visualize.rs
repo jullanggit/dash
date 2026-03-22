@@ -1,10 +1,14 @@
 use std::{
     array,
+    collections::{HashMap, HashSet},
+    convert::identity,
     hash::{DefaultHasher, Hash, Hasher},
 };
 
 use crate::ratings::{
+    ArtistGenres,
     analyze::{Analyzation, TrackAnalyzation},
+    artist_genres,
     caching::use_server_fn,
     ratings_server,
 };
@@ -16,7 +20,7 @@ use charming::{
         AreaStyle, AxisType, Color, ColorStop, Formatter, ItemStyle, JsFunction, LineStyle,
         SplitLine, Tooltip, Trigger,
     },
-    series::Line,
+    series::{Line, Pie, PieRoseType},
 };
 use dioxus::prelude::*;
 
@@ -452,6 +456,58 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
     }
 
     chart
+}
+
+pub fn genre_proportions(data: &Analyzation, genres: &ArtistGenres) -> Chart {
+    let mut genre_counts: HashMap<String, (f32, u32)> = HashMap::new();
+
+    for (track, analyzation) in &data.tracks {
+        let mut track_genres = HashSet::new();
+        for genre in track
+            .artists
+            .iter()
+            .filter_map(|artist| artist.id.clone().and_then(|id| genres.get(&id)))
+            .flat_map(identity)
+        {
+            if track_genres.insert(genre) {
+                let (acc, num) = genre_counts.entry(genre.clone()).or_insert((0.0, 0));
+                *acc += analyzation.canonical_rating;
+                *num += 1;
+            }
+        }
+    }
+
+    let mut cumulative_genre_counts = genre_counts
+        .clone()
+        .into_iter()
+        .map(|(genre, (acc, _))| (acc, genre))
+        .collect::<Vec<_>>();
+    cumulative_genre_counts.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
+
+    let mut average_genre_counts = genre_counts
+        .into_iter()
+        .map(|(genre, (acc, num))| (acc / num as f32, genre))
+        .collect::<Vec<_>>();
+    average_genre_counts.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
+
+    base_chart()
+        .title(Title::new().text("Genre Cumulative Rating"))
+        .series(
+            Pie::new()
+                .rose_type(PieRoseType::Radius)
+                .radius(vec!["50", "150"])
+                .center(vec!["50%", "50%"])
+                .item_style(ItemStyle::new().border_radius(8))
+                .data(average_genre_counts),
+        )
+        .series(
+            Pie::new()
+                .rose_type(PieRoseType::Radius)
+                .radius(vec!["50", "150"])
+                .center(vec!["50%", "50%"])
+                .item_style(ItemStyle::new().border_radius(8))
+                .data(cumulative_genre_counts),
+        )
 }
 
 fn release_date_to_timestamp_millis(

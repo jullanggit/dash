@@ -1,4 +1,8 @@
-use crate::ratings::{caching::use_server_fn, rating as fetch_rating, use_playback_state};
+use std::iter;
+
+use crate::ratings::{
+    artist_genres, caching::use_server_fn, rating as fetch_rating, use_playback_state,
+};
 use dioxus::prelude::*;
 use rspotify_model::{CurrentPlaybackContext, FullTrack, PlayableItem};
 use time::Duration;
@@ -80,10 +84,11 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
 }
 
 #[server]
-async fn charts() -> Result<[String; 5]> {
+async fn charts() -> Result<Vec<String>> {
     use crate::ratings::{
-        average_rating_per_day, canonical_rating_correlations, canonical_rating_distribution,
-        num_ratings_history, ratings, ratings_server, song_canonical_rating_histories,
+        artist_genres_server, average_rating_per_day, canonical_rating_correlations,
+        canonical_rating_distribution, genre_proportions, num_ratings_history, ratings,
+        ratings_server, song_canonical_rating_histories,
     };
 
     use charming::HtmlRenderer;
@@ -91,6 +96,7 @@ async fn charts() -> Result<[String; 5]> {
     let renderer = HtmlRenderer::new("Renderer", 1920, 1080);
 
     let analyzation = ratings_server().await;
+    let artist_genres = artist_genres_server().await;
 
     Ok([
         canonical_rating_distribution,
@@ -99,10 +105,13 @@ async fn charts() -> Result<[String; 5]> {
         song_canonical_rating_histories,
         canonical_rating_correlations,
     ]
-    .map(|f| {
-        let chart = f(&analyzation);
+    .into_iter()
+    .map(|f| f(&analyzation))
+    .chain([genre_proportions].map(|f| f(&analyzation, &artist_genres)))
+    .map(|chart| {
         renderer
             .render(&chart)
             .expect("Rendering chart shouldn't fail")
-    }))
+    })
+    .collect())
 }

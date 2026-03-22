@@ -21,14 +21,17 @@ use rspotify::{
 #[cfg(feature = "server")]
 use rspotify_model::Page;
 use rspotify_model::{
-    CurrentPlaybackContext, PlayableItem, PlaylistItem, SimplifiedPlaylist, TrackId,
+    ArtistId, CurrentPlaybackContext, PlayableItem, PlaylistItem, SimplifiedPlaylist, TrackId,
 };
 use serde::Serialize;
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
 #[cfg(feature = "server")]
 use std::pin::Pin;
-use std::sync::OnceLock;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::OnceLock,
+};
 use time::{Duration, UtcDateTime};
 #[cfg(feature = "server")]
 use tokio::{
@@ -287,6 +290,49 @@ caching!(
     },
     PLAYBACK_STATE,
     Duration::seconds(1)
+);
+
+pub type ArtistGenres = HashMap<ArtistId<'static>, Vec<String>>;
+caching!(
+    artist_genres,
+    ArtistGenres,
+    async |previous| {
+        println!("Getting track genres");
+
+        let spotify = spotify().await;
+        let tracks = ratings_server().await;
+
+        let mut artist_genres = previous.unwrap_or_default();
+
+        for artist in tracks
+            .tracks
+            .into_iter()
+            .flat_map(|(track, _)| track.artists)
+        {
+            if let Some(artist_id) = artist.id {
+                // assume genres for an artist don't change
+                if artist_genres.contains_key(&artist_id) {
+                    continue;
+                }
+
+                match retrying(
+                    move |artist_id| async move { spotify.artist(artist_id).await },
+                    artist_id.clone(),
+                )
+                .await
+                {
+                    Ok(artist) => {
+                        artist_genres.insert(artist_id, artist.genres);
+                    }
+                    Err(e) => eprintln!("Failed to get artist {}: {e}", artist.name),
+                }
+            }
+        }
+
+        artist_genres
+    },
+    TRACK_GENRES,
+    Duration::minutes(1)
 );
 
 // TODO: maybe return None if there are no ratings yet and display that in the ui

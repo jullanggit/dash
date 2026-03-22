@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use rspotify_model::FullTrack;
+use rspotify_model::{FullArtist, FullTrack};
 use serde::{Deserialize, Serialize};
 use time::{Date, Duration, UtcDateTime};
 
