@@ -87,6 +87,7 @@ caching!(
         let mut response = paginate_retrying(move |offset| {
             let spotify = spotify.clone();
             async move {
+                println!("[SPOTIFY API LOG] current user playlists, offset {offset}");
                 spotify
                     .current_user_playlists_manual(None, Some(offset))
                     .await
@@ -210,6 +211,7 @@ caching!(
                 let spotify = spotify.clone();
                 let id = playlist.id.clone();
                 async move {
+                    println!("[SPOTIFY API LOG] playlist items, id {id}, offset {offset}");
                     spotify
                         .playlist_items_manual(id, None, None, None, Some(offset))
                         .await
