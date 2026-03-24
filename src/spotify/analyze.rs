@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use rspotify_model::{FullArtist, FullTrack};
+use rspotify_model::{FullArtist, FullTrack, TrackId};
 use serde::{Deserialize, Serialize};
 use time::{Date, Duration, UtcDateTime};
 
@@ -23,6 +23,15 @@ pub struct Analyzation {
     pub average_rating_per_day: Vec<(Date, f32)>,
     pub num_ratings_history: Vec<(UtcDateTime, u32)>,
     pub num_rated_tracks_history: Vec<(UtcDateTime, u32)>,
+}
+impl Analyzation {
+    pub fn rating(&self, track_id: TrackId<'_>) -> f32 {
+        self.tracks
+            .iter()
+            .find(|(track, _)| track.id.as_ref() == Some(&track_id))
+            .map(|(_, analyzation)| analyzation.canonical_rating)
+            .unwrap_or(DEFAULT_RATING)
+    }
 }
 
 pub type AnalyzedTracks = Vec<(FullTrack, TrackAnalyzation)>;

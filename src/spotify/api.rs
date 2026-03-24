@@ -339,15 +339,8 @@ caching!(
 
 // TODO: maybe return None if there are no ratings yet and display that in the ui
 #[server]
-pub async fn rating(track_id: TrackId<'static>) -> Result<f32> {
-    let ratings = ratings_server().await;
-
-    Ok(ratings
-        .tracks
-        .iter()
-        .find(|(track, _)| track.id.as_ref() == Some(&track_id))
-        .map(|(_, analyzation)| analyzation.canonical_rating)
-        .unwrap_or(DEFAULT_RATING))
+pub async fn rating(track_id: TrackId<'_>) -> Result<f32> {
+    Ok(ratings_server().await.rating(track_id))
 }
 
 /// Only returns genres for rated songs
