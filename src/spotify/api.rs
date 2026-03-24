@@ -1,8 +1,8 @@
 #[cfg(feature = "server")]
-use crate::ratings::caching::caching;
+use crate::spotify::caching::caching;
 use crate::{
     caching,
-    ratings::{
+    spotify::{
         analyze::{Analyzation, DEFAULT_RATING, TrackAnalyzation, analyze},
         caching::use_server_fn,
     },

@@ -1,6 +1,6 @@
 use std::iter;
 
-use crate::ratings::{
+use crate::spotify::{
     artist_genres, caching::use_server_fn, genres, playback_state, rating as fetch_rating,
     use_playback_state,
 };
@@ -110,7 +110,7 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
 
 #[server]
 async fn charts() -> Result<Vec<String>> {
-    use crate::ratings::{
+    use crate::spotify::{
         artist_genres_server, average_rating_per_day, canonical_rating_correlations,
         canonical_rating_distribution, genre_proportions, num_ratings_history, ratings,
         ratings_server, song_canonical_rating_histories,

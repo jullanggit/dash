@@ -5,7 +5,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
 };
 
-use crate::ratings::{
+use crate::spotify::{
     ArtistGenres,
     analyze::{Analyzation, TrackAnalyzation},
     artist_genres,
