@@ -6,10 +6,9 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::env::home_dir;
 #[cfg(feature = "server")]
 use std::{
-    collections::HashMap,
     fmt::Display,
     hash::Hash,
-    sync::{Arc, LazyLock, OnceLock},
+    sync::{Arc, OnceLock},
 };
 use time::UtcDateTime;
 #[cfg(feature = "server")]
@@ -181,7 +180,7 @@ where
         }
     };
 
-    use_future(move || body());
+    use_future(body);
     use_interval(
         std::time::Duration::from_nanos(interval.whole_nanoseconds() as u64),
         move |_| body(),

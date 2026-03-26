@@ -3,14 +3,13 @@ use crate::spotify::caching::{caching, caching_hashmap};
 use crate::{
     caching, caching_hashmap,
     spotify::{
-        analyze::{Analyzation, DEFAULT_RATING, TrackAnalyzation, analyze},
+        analyze::{Analyzation, TrackAnalyzation},
         caching::use_server_fn,
     },
 };
 #[cfg(feature = "server")]
 use dashmap::DashMap;
 use dioxus::prelude::*;
-use dioxus_sdk_time::use_interval;
 #[cfg(feature = "server")]
 use futures::Stream;
 use futures::StreamExt;
@@ -26,14 +25,12 @@ use rspotify_model::{
     ArtistId, CurrentPlaybackContext, FullArtist, PlayableItem, PlaylistItem, SimplifiedArtist,
     SimplifiedPlaylist, TrackId,
 };
-use serde::Serialize;
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
 #[cfg(feature = "server")]
 use std::pin::Pin;
 use std::{
-    collections::{HashMap, HashSet},
-    convert::identity,
+    collections::HashSet,
     sync::{Arc, LazyLock, OnceLock},
 };
 use time::{Duration, UtcDateTime};
@@ -168,28 +165,22 @@ where
 {
     loop {
         let res = f(args.clone()).await;
-        match res {
-            Err(ClientError::Http(ref http)) => match http.as_ref() {
-                rspotify_http::HttpError::StatusCode(response) => {
-                    let code = response.status().as_u16();
-                    if code == 429 {
-                        let retry_after = response
-                            .headers()
-                            .iter()
-                            .find(|(name, _)| name.as_str() == "retry-after")
-                            .and_then(|(_, value)| value.to_str().ok())
-                            .and_then(|str| str.parse().ok())
-                            .unwrap_or(60);
+        if let Err(ClientError::Http(ref http)) = res
+            && let rspotify_http::HttpError::StatusCode(response) = http.as_ref()
+            && response.status().as_u16() == 429
+        {
+            let retry_after = response
+                .headers()
+                .iter()
+                .find(|(name, _)| name.as_str() == "retry-after")
+                .and_then(|(_, value)| value.to_str().ok())
+                .and_then(|str| str.parse().ok())
+                .unwrap_or(60);
 
-                        // wait for retry-after, retry in the next loop, as offset didnt get incremented
-                        println!("Retrying {} after {retry_after} seconds", response.url());
-                        sleep(std::time::Duration::from_secs(retry_after)).await;
-                        continue;
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
+            // wait for retry-after, retry in the next loop, as offset didnt get incremented
+            println!("Retrying {} after {retry_after} seconds", response.url());
+            sleep(std::time::Duration::from_secs(retry_after)).await;
+            continue;
         }
 
         return res;
@@ -201,16 +192,18 @@ caching!(
     Analyzation,
     // get ratings. Only re-fetch ratings within the last 15 minutes.
     async |previous| {
+        use crate::spotify::analyze::analyze;
+
         let spotify = spotify().await;
         let playlists = rating_playlists_server().await;
         let mut ratings = previous.unwrap_or_default().tracks;
 
         // remove any ratings younger than 15 minutes
         let now = UtcDateTime::now();
-        ratings.retain_mut(|(track, analyzation)| {
+        ratings.retain_mut(|(_, analyzation)| {
             analyzation
                 .rating_history
-                .retain(|(date_time, rating)| now - Duration::minutes(15) > *date_time);
+                .retain(|(date_time, _)| now - Duration::minutes(15) > *date_time);
             !analyzation.rating_history.is_empty()
         });
 
@@ -298,7 +291,7 @@ caching!(
 
 // TODO: maybe return None if there are no ratings yet and display that in the ui
 #[server]
-pub async fn rating(track_id: TrackId<'_>) -> Result<f32> {
+pub async fn rating(track_id: TrackId<'static>) -> Result<f32> {
     Ok(ratings_server().await.rating(track_id))
 }
 
@@ -306,7 +299,7 @@ caching_hashmap!(
     full_artist,
     ArtistId<'static>,
     FullArtist,
-    async |artist_id, previous| {
+    async |artist_id, _| {
         let spotify = spotify().await;
 
         match retrying(

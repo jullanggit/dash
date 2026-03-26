@@ -1,13 +1,10 @@
 #[cfg(feature = "server")]
 use rspotify_model::TrackId;
 
-use crate::spotify::ratings;
-
 #[cfg(feature = "server")]
 async fn choose_random_song<'a>(tracks: &'a [TrackId<'_>]) -> Option<TrackId<'a>> {
-    use rand::{RngExt, rng};
-
     use crate::spotify::ratings_server;
+    use rand::{RngExt, rng};
 
     let ratings = ratings_server().await;
     let weights = tracks

@@ -1,10 +1,5 @@
-use std::iter;
-
-use crate::spotify::{
-    caching::use_server_fn, genres, playback_state, rating as fetch_rating, use_playback_state,
-};
-use dioxus::{html::script::r#async, prelude::*};
-use futures::FutureExt;
+use crate::spotify::{caching::use_server_fn, genres, rating as fetch_rating, use_playback_state};
+use dioxus::prelude::*;
 use rspotify_model::{CurrentPlaybackContext, FullTrack, PlayableItem};
 use time::Duration;
 
@@ -48,17 +43,17 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
     });
 
     let genres = use_resource(move || async move {
-        if let Some(Some(CurrentPlaybackContext {
-            item: Some(PlayableItem::Track(FullTrack { ref artists, .. })),
+        // let to avoid holding the 'read' across await points
+        let Some(Some(CurrentPlaybackContext {
+            item: Some(PlayableItem::Track(FullTrack { artists, .. })),
             ..
-        })) = *playback_state.read()
-        {
-            let mut genres = genres(&artists).await.into_iter().collect::<Vec<_>>();
-            genres.sort();
-            Some(genres)
-        } else {
-            None
-        }
+        })) = playback_state.read().clone()
+        else {
+            return None;
+        };
+        let mut genres = genres(&artists).await.into_iter().collect::<Vec<_>>();
+        genres.sort();
+        Some(genres)
     });
 
     let read = playback_state.read();
@@ -108,8 +103,7 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
 async fn charts() -> Result<Vec<String>> {
     use crate::spotify::{
         average_rating_per_day, canonical_rating_correlations, canonical_rating_distribution,
-        genre_proportions, num_ratings_history, ratings, ratings_server,
-        song_canonical_rating_histories,
+        genre_proportions, num_ratings_history, ratings_server, song_canonical_rating_histories,
     };
 
     use charming::HtmlRenderer;

@@ -1,15 +1,4 @@
-use std::{
-    array,
-    collections::{HashMap, HashSet},
-    convert::identity,
-    hash::{DefaultHasher, Hash, Hasher},
-};
-
-use crate::spotify::{
-    analyze::{Analyzation, TrackAnalyzation},
-    caching::use_server_fn,
-    genres, ratings_server,
-};
+use crate::spotify::analyze::{Analyzation, TrackAnalyzation};
 use charming::{
     Chart,
     component::{Axis, Legend, Title},
@@ -20,9 +9,12 @@ use charming::{
     },
     series::{Line, Pie, PieRoseType},
 };
-use dioxus::prelude::*;
-
-use time::{Date, Duration, Month, UtcDateTime};
+use std::{
+    array,
+    collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
+};
+use time::{Date, Month, UtcDateTime};
 
 pub fn rating_per_song(data: Analyzation) {
     let mut vec = data
