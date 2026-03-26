@@ -1,17 +1,33 @@
-use serde::Deserialize;
-
+use crate::caching;
 #[cfg(feature = "server")]
-pub async fn config() -> Config {
-    serde_json::from_str(
-        &tokio::fs::read_to_string("config.json")
-            .await
-            .expect("Config should be readable"),
-    )
-    .expect("Config should be correct")
-}
+use crate::spotify::caching::caching;
+use crate::spotify::caching::use_server_fn;
+use dioxus::prelude::*;
+use serde::{Deserialize, Serialize};
+use time::Duration;
+use time::UtcDateTime;
+#[cfg(feature = "server")]
+use tokio::sync::{Mutex, RwLock};
+
+caching!(
+    config,
+    Config,
+    async |_| {
+        trace!("Getting config");
+
+        serde_json::from_str(
+            &tokio::fs::read_to_string("config.json")
+                .await
+                .expect("Config should be readable"),
+        )
+        .expect("Config should be correct")
+    },
+    CONFIG,
+    Duration::minutes(1)
+);
 
 structstruck::strike!(
-    #[structstruck::each[derive(Debug, Deserialize, Clone)]]
+    #[structstruck::each[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]]
     #[structstruck::each[serde(rename_all = "camelCase")]]
     pub struct Config {
       pub mimir: struct {
@@ -39,3 +55,14 @@ structstruck::strike!(
       }>
     }
 );
+
+impl Config {
+    fn default() -> Self {
+        Self {
+            mimir: Mimir {
+                url: "localhost:3001/mimir".to_string(),
+            },
+            dashboards: Vec::new(),
+        }
+    }
+}

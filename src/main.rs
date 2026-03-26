@@ -45,6 +45,12 @@ const MAIN_CSS: Asset = asset!("/assets/styling/main.css");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 fn main() {
+    #[cfg(feature = "server")]
+    {
+        use crate::spotify::playback::handle_weighted_playback;
+
+        tokio::spawn(handle_weighted_playback());
+    }
     // The `launch` function is the main entry point for a dioxus app. It takes a component and renders it with the platform feature
     // you have enabled
     dioxus::launch(App);

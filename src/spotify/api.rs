@@ -23,7 +23,7 @@ use rspotify::{
 use rspotify_model::Page;
 use rspotify_model::{
     ArtistId, CurrentPlaybackContext, FullArtist, FullTrack, PlayableItem, PlaylistId,
-    PlaylistItem, SimplifiedArtist, SimplifiedPlaylist, TrackId,
+    PlaylistItem, SavedTrack, SimplifiedArtist, SimplifiedPlaylist, TrackId,
 };
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
@@ -156,7 +156,7 @@ where
 /// Retries `f` if it got a too-many-requests error.
 /// Suspends for the duration requested by the spotify API, which may be a long period of time.
 #[cfg(feature = "server")]
-async fn retrying<F, Args, Fut, T>(f: F, args: Args) -> ClientResult<T>
+pub async fn retrying<F, Args, Fut, T>(f: F, args: Args) -> ClientResult<T>
 where
     F: Fn(Args) -> Fut,
     Args: Clone,
@@ -282,6 +282,51 @@ caching!(
 );
 
 caching!(
+    saved_tracks,
+    HashSet<TrackId<'static>>,
+    // get ratings. Only re-fetch ratings within the last 15 minutes.
+    async |previous| {
+        let spotify = spotify().await;
+        let mut saved_tracks = previous.unwrap_or_default();
+
+        trace!("Getting saved tracks");
+
+        let mut items = paginate_retrying(move |offset| {
+            let spotify = spotify.clone();
+            async move {
+                trace!("[SPOTIFY API LOG] saved_tracks, offset {offset}");
+                spotify
+                    .current_user_saved_tracks_manual(None, None, Some(offset))
+                    .await
+            }
+        })
+        .await;
+
+        // assumptions:
+        // The first initialization fetches all available items.
+        // The saved tracks is only ever appended to. TODO: refetch the entire playlist from time to time
+        while let Some(result) = items.next().await {
+            match result {
+                Ok(SavedTrack { track, .. }) => {
+                    if let FullTrack {
+                        id: Some(track_id), ..
+                    } = track
+                        && !saved_tracks.insert(track_id)
+                    {
+                        break;
+                    }
+                }
+                Err(e) => error!("Failed to get saved tracks: {e}"),
+            }
+        }
+
+        saved_tracks
+    },
+    SAVED_TRACKS,
+    Duration::minutes(1)
+);
+
+caching!(
     playback_state,
     Option<CurrentPlaybackContext>,
     async |_previous| {
@@ -297,6 +342,25 @@ caching!(
         .flatten()
     },
     PLAYBACK_STATE,
+    Duration::seconds(1)
+);
+
+caching!(
+    queue,
+    Vec<PlayableItem>,
+    async |_| {
+        trace!("Getting queue");
+
+        let spotify = spotify().await;
+        retrying(
+            move |_| async move { spotify.current_user_queue().await },
+            (),
+        )
+        .await
+        .map(|queue| queue.queue)
+        .unwrap_or_default()
+    },
+    QUEUE,
     Duration::seconds(1)
 );
 
@@ -390,3 +454,24 @@ caching_hashmap!(
     PLAYLIST_ITEMS,
     Duration::HOUR
 );
+
+// (mis)use caching macro to periodically serialize and automatically deserialize
+caching!(
+    weighted_playback_enabled,
+    HashSet<PlaylistId<'static>>,
+    async |previous| { previous.unwrap_or_default() },
+    WEIGHTED_PLAYBACK_ENABLED,
+    Duration::weeks(52)
+);
+#[server]
+pub async fn weighted_playback(playlist: PlaylistId<'static>, enabled: bool) -> Result<()> {
+    let mut option = WEIGHTED_PLAYBACK_ENABLED.write().await;
+    let set = option.get_or_insert_with(HashSet::new);
+    if enabled {
+        set.insert(playlist);
+    } else {
+        set.remove(&playlist);
+    }
+
+    Ok(())
+}

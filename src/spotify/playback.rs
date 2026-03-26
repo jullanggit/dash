@@ -1,47 +1,80 @@
+use crate::spotify::spotify;
 use dioxus::prelude::*;
-use rspotify::prelude::OAuthClient;
-use rspotify_model::{CurrentPlaybackContext, PlaylistId, TrackId, Type};
+use rspotify_model::{Context, CurrentPlaybackContext, PlaylistId, TrackId, Type};
+use std::time::Duration;
 
-use crate::spotify::{playlist_tracks_server, spotify};
+#[cfg(feature = "server")]
+pub async fn handle_weighted_playback() -> ! {
+    loop {
+        queue_random_song().await;
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
 
 // TODO:
 // - only add a song to queue if it is empty
 // - store user settings for which playlists should be affected
-#[server]
-async fn queue_random_song(context: CurrentPlaybackContext) -> Result<()> {
+#[cfg(feature = "server")]
+async fn queue_random_song() {
+    use crate::spotify::weighted_playback_enabled_server;
+    use crate::spotify::{
+        playback_state_server, playlist_tracks_server, queue_server, retrying, saved_tracks_server,
+    };
+    use rspotify::prelude::OAuthClient;
+
     let spotify = spotify().await;
 
-    if let Some(context) = context.context {
-        match context._type {
-            Type::Artist => todo!(),
-            Type::Album => todo!(),
-            Type::Track => todo!(),
-            Type::Playlist => {
-                let tracks = playlist_tracks_server(
-                    PlaylistId::from_id(context.uri)
-                        .expect("_type = playlist uri should be a playlist id"),
-                )
-                .await
-                .iter()
-                .filter_map(|track| track.id.clone())
-                .collect::<Vec<_>>();
-
-                let track = choose_random_song(&tracks).await;
-
-                if let Some(track) = track {
-                    spotify.add_item_to_queue(track.into(), None);
-                }
-            }
-            Type::User => todo!(),
-            Type::Show => todo!(),
-            Type::Episode => todo!(),
-            Type::Collection => todo!(),
-            Type::Collectionyourepisodes => todo!(),
-            Type::Unknown(_) => todo!(),
-        }
+    // only queue a song if the queue is empty
+    let queue = queue_server().await;
+    if !queue.is_empty() {
+        return;
     }
 
-    Ok(())
+    let context = playback_state_server().await;
+
+    if let Some(CurrentPlaybackContext {
+        context: Some(Context { _type, uri, .. }),
+        ..
+    }) = context
+    {
+        let tracks = match _type {
+            Type::Playlist => {
+                let id =
+                    PlaylistId::from_id(uri).expect("_type = playlist uri should be a playlist id");
+                if weighted_playback_enabled_server().await.contains(&id) {
+                    Some(
+                        playlist_tracks_server(id)
+                            .await
+                            .iter()
+                            .filter_map(|track| track.id.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    None
+                }
+            }
+            Type::Collection => Some(saved_tracks_server().await.into_iter().collect::<Vec<_>>()),
+            _ => None,
+        };
+
+        if let Some(tracks) = tracks {
+            let track = choose_random_song(&tracks).await;
+
+            if let Some(track) = track {
+                let res = retrying(
+                    move |(spotify, track)| async {
+                        spotify.add_item_to_queue(track.into(), None).await
+                    },
+                    (spotify, track.clone()),
+                )
+                .await;
+                if let Err(e) = res {
+                    warn!("Failed to add track {track} to queue: {e}")
+                }
+            }
+        }
+    }
 }
 
 #[cfg(feature = "server")]

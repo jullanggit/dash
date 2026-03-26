@@ -18,6 +18,7 @@ use tokio::{
     time::{Duration as TokioDuration, sleep},
 };
 
+// TODO: add the notion of a failed refresh
 /// Return the result of `f`, caching to memory and disk, updating ever `interval`.
 ///
 /// `last_fetched` serves as synchronization and interval control: whenever a request is updating the value, it locks the mutex, and updates the datetime inside.
