@@ -1,5 +1,6 @@
 #![feature(macro_metavar_expr_concat)]
 #![feature(iter_intersperse)]
+#![feature(option_reference_flattening)]
 
 // The dioxus prelude contains a ton of common items used in dioxus apps. It's a good idea to import wherever you
 // need dioxus
