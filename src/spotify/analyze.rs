@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use rspotify_model::{FullArtist, FullTrack, TrackId};
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ pub struct TrackAnalyzation {
     pub rating_history: Vec<(UtcDateTime, f32)>,
     pub canonical_rating_history: Vec<(UtcDateTime, f32)>,
     pub canonical_rating: f32,
+    pub genres: HashSet<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -37,7 +38,10 @@ impl Analyzation {
 pub type AnalyzedTracks = Vec<(FullTrack, TrackAnalyzation)>;
 
 /// Build analyzation based on tracks and rating histories
-pub fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
+#[cfg(feature = "server")]
+pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
+    use crate::spotify::genres;
+
     println!("Analyzing ratings");
 
     fn canonical_rating(rating_history: impl IntoIterator<Item = (f32, UtcDateTime)>) -> f32 {
@@ -58,7 +62,7 @@ pub fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     }
 
     // track analyzations
-    for (_, analyzation) in &mut tracks {
+    for (track, analyzation) in &mut tracks {
         analyzation
             .rating_history
             .sort_unstable_by_key(|&(time, _)| time);
@@ -82,6 +86,8 @@ pub fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
             .last()
             .map(|(_, rating)| *rating)
             .unwrap_or(DEFAULT_RATING);
+
+        analyzation.genres = genres(&track.artists).await;
     }
 
     // cross-track analyzations

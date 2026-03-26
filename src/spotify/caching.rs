@@ -190,6 +190,36 @@ where
     state
 }
 
+#[macro_export]
+macro_rules! caching_hashmap {
+    ($fn_name:ident, $key:ty, $return:ty, $closure:expr, $const:ident, $interval:expr) => {
+        #[cfg(feature = "server")]
+        static $const: OnceLock<DashMap<$key, $return>> = OnceLock::new();
+        #[cfg(feature = "server")]
+        static ${ concat($const, _LAST_FETCH) }:
+            LazyLock<DashMap<$key, Arc<Mutex<UtcDateTime>>>> = LazyLock::new(DashMap::new); // initialize to min so the first access is always identified as after it
+
+        /// Server-only function, returns output directly
+        #[cfg(feature = "server")]
+        pub async fn ${ concat($fn_name, _server) }(key: $key) -> $return {
+            caching_hashmap($closure, key, &$const, &${ concat($const, _LAST_FETCH) }, $interval, stringify!($fn_name)).await
+        }
+
+        /// Client-Server function, returns Result for transport errors
+        #[server]
+        pub async fn $fn_name(key: $key) -> Result<$return> {
+            Ok(${ concat($fn_name, _server) }(key).await)
+        }
+
+        // /// Client function, returns a Signal that updates every interval (
+        // #[doc = stringify!($interval)]
+        // /// )
+        // pub fn ${ concat(use_, $fn_name) }() -> Signal<Option<$return>> {
+        //     use_server_fn($fn_name, $interval)
+        // }
+    };
+}
+
 #[cfg(feature = "server")]
 pub async fn caching_hashmap<K, V, F, Fut>(
     f: F,
@@ -202,7 +232,7 @@ pub async fn caching_hashmap<K, V, F, Fut>(
 where
     K: Hash + Eq + Serialize + DeserializeOwned + Clone + Send + Sync + Display,
     V: Clone + Serialize + DeserializeOwned + Send + Sync,
-    F: Fn(Option<V>) -> Fut + Send + 'static,
+    F: Fn(K, Option<V>) -> Fut + Send + 'static,
     Fut: Future<Output = V> + Send + 'static,
 {
     let now = UtcDateTime::now();
@@ -260,7 +290,7 @@ where
                 Some(cached) => {
                     let clone = cached.clone();
                     tokio::spawn(async move {
-                        write_mem_and_disk_cache(f(Some(clone)).await).await;
+                        write_mem_and_disk_cache(f(key, Some(clone)).await).await;
 
                         // hold lock until all caches are updated
                         update_and_drop_last_fetched(guard);
@@ -282,7 +312,7 @@ where
 
                             let clone = cached.clone();
                             tokio::spawn(async move {
-                                write_mem_and_disk_cache(f(Some(clone)).await).await;
+                                write_mem_and_disk_cache(f(key, Some(clone)).await).await;
 
                                 // hold lock until all caches are updated
                                 update_and_drop_last_fetched(guard);
@@ -292,7 +322,7 @@ where
                         }
                         // update synchronously, return new value once its available
                         None => {
-                            let new_value = f(None).await;
+                            let new_value = f(key, None).await;
                             write_mem_and_disk_cache(new_value.clone()).await;
 
                             // hold lock until all caches are updated

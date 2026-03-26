@@ -1,12 +1,14 @@
 #[cfg(feature = "server")]
-use crate::spotify::caching::caching;
+use crate::spotify::caching::{caching, caching_hashmap};
 use crate::{
-    caching,
+    caching, caching_hashmap,
     spotify::{
         analyze::{Analyzation, DEFAULT_RATING, TrackAnalyzation, analyze},
         caching::use_server_fn,
     },
 };
+#[cfg(feature = "server")]
+use dashmap::DashMap;
 use dioxus::prelude::*;
 use dioxus_sdk_time::use_interval;
 #[cfg(feature = "server")]
@@ -21,7 +23,7 @@ use rspotify::{
 #[cfg(feature = "server")]
 use rspotify_model::Page;
 use rspotify_model::{
-    ArtistId, CurrentPlaybackContext, PlayableItem, PlaylistItem, SimplifiedArtist,
+    ArtistId, CurrentPlaybackContext, FullArtist, PlayableItem, PlaylistItem, SimplifiedArtist,
     SimplifiedPlaylist, TrackId,
 };
 use serde::Serialize;
@@ -32,7 +34,7 @@ use std::pin::Pin;
 use std::{
     collections::{HashMap, HashSet},
     convert::identity,
-    sync::OnceLock,
+    sync::{Arc, LazyLock, OnceLock},
 };
 use time::{Duration, UtcDateTime};
 #[cfg(feature = "server")]
@@ -269,7 +271,7 @@ caching!(
             }
         }
 
-        analyze(ratings)
+        analyze(ratings).await
     },
     RATINGS,
     Duration::seconds(10)
@@ -294,66 +296,49 @@ caching!(
     Duration::seconds(1)
 );
 
-pub type ArtistGenres = HashMap<ArtistId<'static>, Vec<String>>;
-caching!(
-    artist_genres,
-    ArtistGenres,
-    async |previous| {
-        println!("Getting track genres");
-
-        let spotify = spotify().await;
-        let tracks = ratings_server().await;
-
-        let mut artist_genres = previous.unwrap_or_default();
-
-        for artist in tracks
-            .tracks
-            .into_iter()
-            .flat_map(|(track, _)| track.artists)
-        {
-            if let Some(artist_id) = artist.id {
-                // assume genres for an artist don't change
-                if artist_genres.contains_key(&artist_id) {
-                    continue;
-                }
-
-                match retrying(
-                    move |artist_id| async move { spotify.artist(artist_id).await },
-                    artist_id.clone(),
-                )
-                .await
-                {
-                    Ok(artist) => {
-                        artist_genres.insert(artist_id, artist.genres);
-                    }
-                    Err(e) => eprintln!("Failed to get artist {}: {e}", artist.name),
-                }
-            }
-        }
-
-        artist_genres
-    },
-    TRACK_GENRES,
-    Duration::minutes(1)
-);
-
 // TODO: maybe return None if there are no ratings yet and display that in the ui
 #[server]
 pub async fn rating(track_id: TrackId<'_>) -> Result<f32> {
     Ok(ratings_server().await.rating(track_id))
 }
 
-/// Only returns genres for rated songs
-/// TODO: make it also fetch genres for non-rated songs
-pub fn genres(artists: &[SimplifiedArtist], artist_genres: &ArtistGenres) -> HashSet<String> {
+caching_hashmap!(
+    full_artist,
+    ArtistId<'static>,
+    FullArtist,
+    async |artist_id, previous| {
+        let spotify = spotify().await;
+
+        match retrying(
+            move |artist_id| async move { spotify.artist(artist_id).await },
+            artist_id.clone(),
+        )
+        .await
+        {
+            Ok(artist) => artist,
+            Err(e) => panic!("Failed to get artist {}: {e}", artist_id),
+        }
+    },
+    ARTISTS,
+    Duration::weeks(4) // assume artists are mostly static
+);
+
+pub async fn genres(artists: &[SimplifiedArtist]) -> HashSet<String> {
     let mut genres = HashSet::new();
 
-    for genre in artists
-        .iter()
-        .filter_map(|artist| artist.id.as_ref().and_then(|id| artist_genres.get(id)))
-        .flat_map(identity)
-    {
-        genres.insert(genre.clone());
+    for artist in artists.iter() {
+        if let Some(ref artist_id) = artist.id {
+            let full_artist = match full_artist(artist_id.clone()).await {
+                Ok(artist) => artist,
+                Err(e) => {
+                    eprintln!("Failed to fetch artist {}: {e}", artist.name);
+                    continue;
+                }
+            };
+            for genre in full_artist.genres {
+                genres.insert(genre.clone());
+            }
+        }
     }
 
     genres

@@ -6,9 +6,7 @@ use std::{
 };
 
 use crate::spotify::{
-    ArtistGenres,
     analyze::{Analyzation, TrackAnalyzation},
-    artist_genres,
     caching::use_server_fn,
     genres, ratings_server,
 };
@@ -458,12 +456,11 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
     chart
 }
 
-pub fn genre_proportions(data: &Analyzation, artist_genres: &ArtistGenres) -> Chart {
+pub fn genre_proportions(data: &Analyzation) -> Chart {
     let mut genre_counts: HashMap<String, (f32, u32)> = HashMap::new();
 
-    for (track, analyzation) in &data.tracks {
-        let genres = genres(&track.artists, artist_genres);
-        for genre in genres {
+    for (_, analyzation) in &data.tracks {
+        for genre in &analyzation.genres {
             let (acc, num) = genre_counts.entry(genre.clone()).or_insert((0.0, 0));
             *acc += analyzation.canonical_rating;
             *num += 1;

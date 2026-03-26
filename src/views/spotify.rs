@@ -1,8 +1,7 @@
 use std::iter;
 
 use crate::spotify::{
-    artist_genres, caching::use_server_fn, genres, playback_state, rating as fetch_rating,
-    use_playback_state,
+    caching::use_server_fn, genres, playback_state, rating as fetch_rating, use_playback_state,
 };
 use dioxus::{html::script::r#async, prelude::*};
 use futures::FutureExt;
@@ -53,11 +52,8 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
             item: Some(PlayableItem::Track(FullTrack { ref artists, .. })),
             ..
         })) = *playback_state.read()
-            && let Ok(artist_genres) = artist_genres().await
         {
-            let mut genres = genres(&artists, &artist_genres)
-                .into_iter()
-                .collect::<Vec<_>>();
+            let mut genres = genres(&artists).await.into_iter().collect::<Vec<_>>();
             genres.sort();
             Some(genres)
         } else {
@@ -111,9 +107,9 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
 #[server]
 async fn charts() -> Result<Vec<String>> {
     use crate::spotify::{
-        artist_genres_server, average_rating_per_day, canonical_rating_correlations,
-        canonical_rating_distribution, genre_proportions, num_ratings_history, ratings,
-        ratings_server, song_canonical_rating_histories,
+        average_rating_per_day, canonical_rating_correlations, canonical_rating_distribution,
+        genre_proportions, num_ratings_history, ratings, ratings_server,
+        song_canonical_rating_histories,
     };
 
     use charming::HtmlRenderer;
@@ -121,7 +117,6 @@ async fn charts() -> Result<Vec<String>> {
     let renderer = HtmlRenderer::new("Renderer", 1920, 1080);
 
     let analyzation = ratings_server().await;
-    let artist_genres = artist_genres_server().await;
 
     Ok([
         canonical_rating_distribution,
@@ -129,10 +124,10 @@ async fn charts() -> Result<Vec<String>> {
         num_ratings_history,
         song_canonical_rating_histories,
         canonical_rating_correlations,
+        genre_proportions,
     ]
     .into_iter()
     .map(|f| f(&analyzation))
-    .chain([genre_proportions].map(|f| f(&analyzation, &artist_genres)))
     .map(|chart| {
         renderer
             .render(&chart)
