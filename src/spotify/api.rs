@@ -22,8 +22,8 @@ use rspotify::{
 #[cfg(feature = "server")]
 use rspotify_model::Page;
 use rspotify_model::{
-    ArtistId, CurrentPlaybackContext, FullArtist, PlayableItem, PlaylistItem, SimplifiedArtist,
-    SimplifiedPlaylist, TrackId,
+    ArtistId, CurrentPlaybackContext, FullArtist, FullTrack, PlayableItem, PlaylistId,
+    PlaylistItem, SimplifiedArtist, SimplifiedPlaylist, TrackId,
 };
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
@@ -197,6 +197,7 @@ where
     }
 }
 
+// TODO: also search from the back for new items
 caching!(
     ratings,
     Analyzation,
@@ -348,3 +349,44 @@ pub async fn genres(artists: &[SimplifiedArtist]) -> HashSet<String> {
 
     genres
 }
+
+caching_hashmap!(
+    playlist_tracks,
+    PlaylistId<'static>,
+    Vec<FullTrack>,
+    async |playlist_id, _| {
+        let spotify = spotify().await;
+
+        let mut out = Vec::new();
+        let mut items = paginate_retrying(move |offset| {
+            let spotify = spotify.clone();
+            let id = playlist_id.clone();
+            async move {
+                trace!("[SPOTIFY API LOG] playlist items, id {id}, offset {offset}");
+                spotify
+                    .playlist_items_manual(id, None, None, None, Some(offset))
+                    .await
+            }
+        })
+        .await;
+
+        while let Some(result) = items.next().await {
+            match result {
+                Ok(item) => match item {
+                    PlaylistItem {
+                        item: Some(PlayableItem::Track(track)),
+                        ..
+                    } => out.push(track),
+                    other => {
+                        info!("Non-track playlist entry: {other:?}")
+                    }
+                },
+                Err(e) => error!("Failed to get playlist items: {e}"),
+            }
+        }
+
+        out
+    },
+    PLAYLIST_ITEMS,
+    Duration::HOUR
+);
