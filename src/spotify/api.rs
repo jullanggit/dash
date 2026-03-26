@@ -163,26 +163,36 @@ where
     Fut: Future<Output = ClientResult<T>>,
     T: DeserializeOwned,
 {
+    let mut num_tries = 0;
     loop {
         let res = f(args.clone()).await;
         if let Err(ClientError::Http(ref http)) = res
             && let rspotify_http::HttpError::StatusCode(response) = http.as_ref()
-            && response.status().as_u16() == 429
+            && num_tries <= 5
         {
             let retry_after = response
-                .headers()
-                .iter()
-                .find(|(name, _)| name.as_str() == "retry-after")
-                .and_then(|(_, value)| value.to_str().ok())
-                .and_then(|str| str.parse().ok())
-                .unwrap_or(60);
+                .status()
+                .as_u16()
+                .eq(&429)
+                .then(|| {
+                    response
+                        .headers()
+                        .iter()
+                        .find(|(name, _)| name.as_str() == "retry-after")
+                        .and_then(|(_, value)| value.to_str().ok())
+                        .and_then(|str| str.parse().ok())
+                })
+                .flatten()
+                .unwrap_or_else(|| {
+                    num_tries += 1;
+                    2u64.pow(num_tries - 1)
+                });
 
             // wait for retry-after, retry in the next loop, as offset didnt get incremented
             println!("Retrying {} after {retry_after} seconds", response.url());
             sleep(std::time::Duration::from_secs(retry_after)).await;
             continue;
         }
-
         return res;
     }
 }
