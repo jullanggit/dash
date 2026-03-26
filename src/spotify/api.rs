@@ -46,7 +46,7 @@ static SPOTIFY: OnceLock<AuthCodeSpotify> = OnceLock::new();
 // TODO: read credentials from config file (possibly with indirection for secrets) instead form .env
 #[cfg(feature = "server")]
 pub async fn spotify() -> &'static AuthCodeSpotify {
-    println!("Getting spotify");
+    trace!("Getting spotify");
 
     match SPOTIFY.get() {
         Some(spotify) => spotify,
@@ -89,12 +89,12 @@ caching!(
         let spotify = spotify().await;
         let mut playlists = Vec::new();
 
-        println!("Getting rating playlists");
+        trace!("Getting rating playlists");
 
         let mut response = paginate_retrying(move |offset| {
             let spotify = spotify.clone();
             async move {
-                println!("[SPOTIFY API LOG] current user playlists, offset {offset}");
+                trace!("[SPOTIFY API LOG] current user playlists, offset {offset}");
                 spotify
                     .current_user_playlists_manual(None, Some(offset))
                     .await
@@ -115,7 +115,7 @@ caching!(
                         };
                     }
                 }
-                Err(e) => eprintln!("Error getting playlists: {e}"),
+                Err(e) => error!("Error getting playlists: {e}"),
             }
         }
 
@@ -189,7 +189,7 @@ where
                 });
 
             // wait for retry-after, retry in the next loop, as offset didnt get incremented
-            println!("Retrying {} after {retry_after} seconds", response.url());
+            info!("Retrying {} after {retry_after} seconds", response.url());
             sleep(std::time::Duration::from_secs(retry_after)).await;
             continue;
         }
@@ -217,14 +217,14 @@ caching!(
             !analyzation.rating_history.is_empty()
         });
 
-        println!("Getting ratings");
+        trace!("Getting ratings");
 
         for (rating, playlist) in playlists {
             let mut items = paginate_retrying(move |offset| {
                 let spotify = spotify.clone();
                 let id = playlist.id.clone();
                 async move {
-                    println!("[SPOTIFY API LOG] playlist items, id {id}, offset {offset}");
+                    trace!("[SPOTIFY API LOG] playlist items, id {id}, offset {offset}");
                     spotify
                         .playlist_items_manual(id, None, None, None, Some(offset))
                         .await
@@ -266,10 +266,10 @@ caching!(
                             }
                         }
                         other => {
-                            eprintln!("Unexpected format for rating playlist entry: {other:?}")
+                            error!("Unexpected format for rating playlist entry: {other:?}")
                         }
                     },
-                    Err(e) => eprintln!("Failed to get playlist items: {e}"),
+                    Err(e) => error!("Failed to get playlist items: {e}"),
                 }
             }
         }
@@ -284,7 +284,7 @@ caching!(
     playback_state,
     Option<CurrentPlaybackContext>,
     async |_previous| {
-        println!("Getting playback state");
+        trace!("Getting playback state");
 
         let spotify = spotify().await;
         retrying(
@@ -310,6 +310,8 @@ caching_hashmap!(
     ArtistId<'static>,
     FullArtist,
     async |artist_id, _| {
+        info!("Getting artist with id {artist_id}");
+
         let spotify = spotify().await;
 
         match retrying(
@@ -334,7 +336,7 @@ pub async fn genres(artists: &[SimplifiedArtist]) -> HashSet<String> {
             let full_artist = match full_artist(artist_id.clone()).await {
                 Ok(artist) => artist,
                 Err(e) => {
-                    eprintln!("Failed to fetch artist {}: {e}", artist.name);
+                    error!("Failed to fetch artist {}: {e}", artist.name);
                     continue;
                 }
             };

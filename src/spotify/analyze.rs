@@ -1,3 +1,4 @@
+use dioxus::prelude::*;
 use rspotify_model::{FullTrack, TrackId};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -41,7 +42,7 @@ pub type AnalyzedTracks = Vec<(FullTrack, TrackAnalyzation)>;
 pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     use crate::spotify::genres;
 
-    println!("Analyzing ratings");
+    trace!("Analyzing ratings");
 
     fn canonical_rating(rating_history: impl IntoIterator<Item = (f32, UtcDateTime)>) -> f32 {
         const HALF_LIFE: Duration = Duration::weeks(26);
