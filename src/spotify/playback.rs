@@ -1,4 +1,3 @@
-use crate::spotify::spotify;
 use dioxus::prelude::*;
 use rspotify_model::{Context, CurrentPlaybackContext, PlaylistId, TrackId, Type};
 use std::time::Duration;
@@ -17,9 +16,9 @@ pub async fn handle_weighted_playback() -> ! {
 // - store user settings for which playlists should be affected
 #[cfg(feature = "server")]
 async fn queue_random_song() {
-    use crate::spotify::weighted_playback_enabled_server;
     use crate::spotify::{
         playback_state_server, playlist_tracks_server, queue_server, retrying, saved_tracks_server,
+        spotify, weighted_playback_enabled_server,
     };
     use rspotify::prelude::OAuthClient;
 
