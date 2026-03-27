@@ -120,6 +120,7 @@ mod server_only {
     use dashmap::mapref::one::Ref;
     use dioxus::prelude::*;
     use dioxus_sdk_time::use_interval;
+    use serde::Deserialize;
     use serde::{Serialize, de::DeserializeOwned};
     use std::env::home_dir;
     use std::ops::{Deref, DerefMut};
@@ -175,6 +176,12 @@ mod server_only {
             F: Fn(Self::K, Option<Self::V>) -> Fut + Send + Sync + 'static,
             Fut: Future<Output = Self::V> + Send + 'static,
         {
+            #[derive(Serialize, Deserialize)]
+            struct WithLastFetched<V> {
+                last_fetched: UtcDateTime,
+                value: V,
+            };
+
             async move {
                 let now = UtcDateTime::now();
 
@@ -186,31 +193,37 @@ mod server_only {
                     // there is a cached value, and it doesn't need updating
                     (Some(cached), Ok((false, _))) | (Some(cached), Err(_)) => cached.clone(),
                     // no other request is currently updating the value, and it needs updating; update it
-                    (in_mem_cached, Ok((true, guard))) => {
+                    (in_mem_cached, Ok((true, mut guard))) => {
                         let key_clone = key.clone();
-                        let write_mem_and_disk_cache = async move |value: Self::V| {
-                            let path = self.disk_cache_path(&key_clone)?;
-                            self.write_mem_cache(key_clone, value.clone()).await;
-                            fs::create_dir_all(path.parent()?).await.ok()?;
-                            fs::write(path, serde_json::to_string(&value).ok()?)
-                                .await
-                                .ok()
-                        };
+                        let write_mem_and_disk_cache =
+                            async move |value: Self::V, mut guard: Self::Guard| {
+                                let path = self.disk_cache_path(&key_clone)?;
+                                self.write_mem_cache(key_clone, value.clone()).await;
 
-                        let update_and_drop_last_fetched = move |mut guard: Self::Guard| {
-                            *guard = UtcDateTime::now();
-                            drop(guard);
-                        };
+                                let now = UtcDateTime::now();
+                                *guard = now;
+
+                                let val = WithLastFetched {
+                                    last_fetched: now,
+                                    value,
+                                };
+
+                                fs::create_dir_all(path.parent()?).await.ok()?;
+                                let res = fs::write(path, serde_json::to_string(&val).ok()?)
+                                    .await
+                                    .ok();
+
+                                drop(guard);
+                                res
+                            };
 
                         match in_mem_cached {
                             // fetch and write new value to cache in the background
                             Some(cached) => {
                                 let clone = cached.clone();
                                 tokio::spawn(async move {
-                                    write_mem_and_disk_cache(f(key, Some(clone)).await).await;
-
-                                    // hold lock until all caches are updated
-                                    update_and_drop_last_fetched(guard);
+                                    write_mem_and_disk_cache(f(key, Some(clone)).await, guard)
+                                        .await;
                                 });
 
                                 cached.clone()
@@ -219,35 +232,30 @@ mod server_only {
                                 let disk_cached = match self.disk_cache_path(&key) {
                                     Some(path) => match fs::read_to_string(path).await {
                                         Ok(contents) => {
-                                            serde_json::from_str::<Self::V>(&contents).ok()
+                                            serde_json::from_str::<WithLastFetched<Self::V>>(
+                                                &contents,
+                                            )
+                                            .ok()
                                         }
                                         Err(_) => None,
                                     },
                                     None => None,
                                 };
                                 match disk_cached {
-                                    // update asynchronously, return cached value
-                                    Some(cached) => {
-                                        self.write_mem_cache(key.clone(), cached.clone()).await;
+                                    // return cached value, update last_fetched, update value on next fetch if necessary
+                                    Some(WithLastFetched {
+                                        last_fetched,
+                                        value,
+                                    }) => {
+                                        self.write_mem_cache(key.clone(), value.clone()).await;
+                                        *guard = last_fetched;
 
-                                        let clone = cached.clone();
-                                        tokio::spawn(async move {
-                                            write_mem_and_disk_cache(f(key, Some(clone)).await)
-                                                .await;
-
-                                            // hold lock until all caches are updated
-                                            update_and_drop_last_fetched(guard);
-                                        });
-
-                                        cached.clone()
+                                        value
                                     }
                                     // update synchronously, return new value once its available
                                     None => {
                                         let new_value = f(key, None).await;
-                                        write_mem_and_disk_cache(new_value.clone()).await;
-
-                                        // hold lock until all caches are updated
-                                        update_and_drop_last_fetched(guard);
+                                        write_mem_and_disk_cache(new_value.clone(), guard).await;
 
                                         new_value
                                     }
