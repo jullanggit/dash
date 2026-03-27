@@ -101,23 +101,19 @@ caching!(
         .await;
 
         while let Some(result) = response.next().await {
-            match result {
-                Ok(playlist) => {
-                    if let Ok(rating) = playlist.name.parse::<f32>()
-                        && (0.0..=5.0).contains(&rating)
-                    {
-                        if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
-                            panic!("Rating folder already present")
-                        } else {
-                            playlists.push((rating, playlist.clone()))
-                        };
-                    }
-                }
-                Err(e) => error!("Error getting playlists: {e}"),
+            let playlist = result.context("Error getting playlist")?;
+            if let Ok(rating) = playlist.name.parse::<f32>()
+                && (0.0..=5.0).contains(&rating)
+            {
+                if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
+                    panic!("Rating folder already present")
+                } else {
+                    playlists.push((rating, playlist.clone()))
+                };
             }
         }
 
-        playlists
+        Ok(playlists)
     },
     RATING_PLAYLISTS,
     Duration::minutes(5)
@@ -238,43 +234,42 @@ caching!(
             // The first initialization fetches all available items.
             // Items older than 15 minutes do not change and are not removed. This can be extended to 'no items are ever changed or removed' once all logic has converted to append-only.
             while let Some(result) = items.next().await {
-                match result {
-                    Ok(item) => match item {
-                        PlaylistItem {
-                            added_at: Some(added_at),
-                            item: Some(PlayableItem::Track(item)),
-                            ..
-                        } => {
-                            let entry =
-                                match ratings.iter_mut().find_map(|(s_track, analyzation)| {
-                                    (*s_track == item).then_some(analyzation)
-                                }) {
-                                    Some(ratings) => ratings,
-                                    None => {
-                                        &mut ratings.push_mut((item, TrackAnalyzation::default())).1
-                                    }
-                                };
+                let item = result.context("Failed to get playlist item")?;
+                match item {
+                    PlaylistItem {
+                        added_at: Some(added_at),
+                        item: Some(PlayableItem::Track(item)),
+                        ..
+                    } => {
+                        let entry = match ratings.iter_mut().find_map(|(s_track, analyzation)| {
+                            (*s_track == item).then_some(analyzation)
+                        }) {
+                            Some(ratings) => ratings,
+                            None => &mut ratings.push_mut((item, TrackAnalyzation::default())).1,
+                        };
 
-                            let data = (
-                                UtcDateTime::from_unix_timestamp(added_at.timestamp()).unwrap(),
-                                rating,
-                            );
+                        let data = (
+                            UtcDateTime::from_unix_timestamp(added_at.timestamp()).unwrap(),
+                            rating,
+                        );
 
-                            if entry.rating_history.contains(&data) {
-                                // We have arrived at data older than 15 minutes we already have, and which we assume hasn't changed, so we stop fetching here.
-                                break;
-                            } else {
-                                entry.rating_history.push(data);
-                            }
+                        if entry.rating_history.contains(&data) {
+                            // We have arrived at data older than 15 minutes we already have, and which we assume hasn't changed, so we stop fetching here.
+                            break;
+                        } else {
+                            entry.rating_history.push(data);
                         }
-                        other => error!("Unexpected format for rating playlist entry: {other:?}"),
-                    },
-                    Err(e) => error!("Failed to get playlist items: {e}"),
+                    }
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "Unexpected format for rating playlist entry: {other:?}"
+                        ));
+                    }
                 }
             }
         }
 
-        analyze(ratings).await
+        Ok(analyze(ratings).await)
     },
     RATINGS,
     Duration::seconds(10)
@@ -305,21 +300,17 @@ caching!(
         // The first initialization fetches all available items.
         // The saved tracks is only ever appended to. TODO: refetch the entire playlist from time to time
         while let Some(result) = items.next().await {
-            match result {
-                Ok(SavedTrack { track, .. }) => {
-                    if let FullTrack {
-                        id: Some(track_id), ..
-                    } = track
-                        && !saved_tracks.insert(track_id)
-                    {
-                        break;
-                    }
-                }
-                Err(e) => error!("Failed to get saved tracks: {e}"),
+            let SavedTrack { track, .. } = result.context("Failed to get saved track")?;
+            if let FullTrack {
+                id: Some(track_id), ..
+            } = track
+                && !saved_tracks.insert(track_id)
+            {
+                break;
             }
         }
 
-        saved_tracks
+        Ok(saved_tracks)
     },
     SAVED_TRACKS,
     Duration::minutes(1)
@@ -332,13 +323,12 @@ caching!(
         trace!("Getting playback state");
 
         let spotify = spotify().await;
-        retrying(
+
+        Ok(retrying(
             move |_| async move { spotify.current_playback(None, None::<[_; 0]>).await },
             (),
         )
-        .await
-        .ok()
-        .flatten()
+        .await?)
     },
     PLAYBACK_STATE,
     Duration::seconds(1)
@@ -351,13 +341,12 @@ caching!(
         trace!("Getting queue");
 
         let spotify = spotify().await;
-        retrying(
+        Ok(retrying(
             move |_| async move { spotify.current_user_queue().await },
             (),
         )
-        .await
-        .map(|queue| queue.queue)
-        .unwrap_or_default()
+        .await?
+        .queue)
     },
     QUEUE,
     Duration::seconds(1)
@@ -378,15 +367,12 @@ caching_hashmap!(
 
         let spotify = spotify().await;
 
-        match retrying(
+        Ok(retrying(
             move |artist_id| async move { spotify.artist(artist_id).await },
             artist_id.clone(),
         )
         .await
-        {
-            Ok(artist) => artist,
-            Err(e) => panic!("Failed to get artist {}: {e}", artist_id),
-        }
+        .with_context(|| format!("Failed to get artist {artist_id}"))?)
     },
     ARTISTS,
     Duration::weeks(4) // assume artists are mostly static
@@ -434,19 +420,16 @@ caching_hashmap!(
         .await;
 
         while let Some(result) = items.next().await {
-            match result {
-                Ok(item) => match item {
-                    PlaylistItem {
-                        item: Some(PlayableItem::Track(track)),
-                        ..
-                    } => out.push(track),
-                    other => info!("Non-track playlist entry: {other:?}"),
-                },
-                Err(e) => error!("Failed to get playlist items: {e}"),
+            match result.context("Failed to get playlist items")? {
+                PlaylistItem {
+                    item: Some(PlayableItem::Track(track)),
+                    ..
+                } => out.push(track),
+                other => info!("Non-track playlist entry: {other:?}"),
             }
         }
 
-        out
+        Ok(out)
     },
     PLAYLIST_ITEMS,
     Duration::HOUR
@@ -456,7 +439,7 @@ caching_hashmap!(
 caching!(
     weighted_playback_enabled,
     HashSet<PlaylistId<'static>>,
-    |_, previous| async move { previous.unwrap_or_default() },
+    |_, previous| async move { Ok(previous.unwrap_or_default()) },
     WEIGHTED_PLAYBACK_ENABLED,
     Duration::weeks(52)
 );

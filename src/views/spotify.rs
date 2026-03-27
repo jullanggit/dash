@@ -93,9 +93,14 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                 }
                 br {}
                 match &*genres.read() {
-                    Some(Some(genres)) if !genres.is_empty() => format!("Genres: {}", genres.iter().cloned().intersperse(", ".into()).collect::<String>()),
+                    Some(Some(genres)) if !genres.is_empty() => {
+                        format!(
+                            "Genres: {}",
+                            genres.iter().cloned().intersperse(", ".into()).collect::<String>(),
+                        )
+                    }
                     Some(_) => String::new(),
-                    None => "Getting genres...".to_string()
+                    None => "Getting genres...".to_string(),
                 }
             }
         }

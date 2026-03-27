@@ -10,15 +10,12 @@ use tokio::sync::{Mutex, RwLock};
 caching!(
     config,
     Config,
-    async |(), _| {
+    async |(), _| -> anyhow::Result<_> {
         trace!("Getting config");
 
-        serde_json::from_str(
-            &tokio::fs::read_to_string("config.json")
-                .await
-                .expect("Config should be readable"),
-        )
-        .expect("Config should be correct")
+        Ok(serde_json::from_str(
+            &tokio::fs::read_to_string("config.json").await?,
+        )?)
     },
     CONFIG,
     Duration::minutes(1)

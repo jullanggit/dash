@@ -123,6 +123,7 @@ mod server_only {
     use serde::Deserialize;
     use serde::{Serialize, de::DeserializeOwned};
     use std::env::home_dir;
+    use std::error::Error;
     use std::ops::{Deref, DerefMut};
     use std::path::PathBuf;
     use std::{
@@ -174,7 +175,7 @@ mod server_only {
         ) -> impl Future<Output = Self::V> + Send
         where
             F: Fn(Self::K, Option<Self::V>) -> Fut + Send + Sync + 'static,
-            Fut: Future<Output = Self::V> + Send + 'static,
+            Fut: Future<Output = Result<Self::V, anyhow::Error>> + Send + 'static,
         {
             #[derive(Serialize, Deserialize)]
             struct WithLastFetched<V> {
@@ -209,12 +210,14 @@ mod server_only {
                                 };
 
                                 fs::create_dir_all(path.parent()?).await.ok()?;
-                                let res = fs::write(path, serde_json::to_string(&val).ok()?)
-                                    .await
-                                    .ok();
+                                if let Err(e) =
+                                    fs::write(path, serde_json::to_string(&val).ok()?).await
+                                {
+                                    warn!("Failed to write to cache: {e}")
+                                }
 
                                 drop(guard);
-                                res
+                                None::<()>
                             };
 
                         match in_mem_cached {
@@ -222,8 +225,12 @@ mod server_only {
                             Some(cached) => {
                                 let clone = cached.clone();
                                 tokio::spawn(async move {
-                                    write_mem_and_disk_cache(f(key, Some(clone)).await, guard)
-                                        .await;
+                                    match f(key, Some(clone)).await {
+                                        Ok(value) => {
+                                            write_mem_and_disk_cache(value, guard).await;
+                                        }
+                                        Err(e) => error!("Failed to refresh value: {e}"),
+                                    }
                                 });
 
                                 cached.clone()
@@ -253,12 +260,15 @@ mod server_only {
                                         value
                                     }
                                     // update synchronously, return new value once its available
-                                    None => {
-                                        let new_value = f(key, None).await;
-                                        write_mem_and_disk_cache(new_value.clone(), guard).await;
-
-                                        new_value
-                                    }
+                                    None => match f(key, None).await {
+                                        Ok(value) => {
+                                            write_mem_and_disk_cache(value.clone(), guard).await;
+                                            value
+                                        }
+                                        Err(e) => panic!(
+                                            "Failed to refresh value, and no cached one present: {e}"
+                                        ),
+                                    },
                                 }
                             }
                         }
