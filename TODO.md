@@ -1,1 +1,2 @@
-- use snapshot id to short-circuit fetching
+- store last_fetched
+- make refreshes fallible
