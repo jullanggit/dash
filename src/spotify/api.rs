@@ -170,9 +170,8 @@ where
             && let rspotify_http::HttpError::StatusCode(response) = http.as_ref()
             && num_tries <= 5
         {
-            let retry_after = response
-                .status()
-                .as_u16()
+            let status_code = response.status().as_u16();
+            let retry_after = status_code
                 .eq(&429)
                 .then(|| {
                     response
@@ -189,7 +188,10 @@ where
                 });
 
             // wait for retry-after, retry in the next loop, as offset didnt get incremented
-            info!("Retrying {} after {retry_after} seconds", response.url());
+            info!(
+                "Retrying {} after {retry_after} seconds: {status_code}",
+                response.url()
+            );
             sleep(std::time::Duration::from_secs(retry_after)).await;
             continue;
         }
