@@ -1,5 +1,5 @@
 #[cfg(feature = "server")]
-use crate::spotify::caching::{caching, caching_hashmap};
+use crate::spotify::caching::caching;
 use crate::{
     caching, caching_hashmap,
     spotify::{

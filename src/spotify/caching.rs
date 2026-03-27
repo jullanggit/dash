@@ -10,7 +10,7 @@ use std::{
     hash::Hash,
     sync::{Arc, OnceLock},
 };
-use time::UtcDateTime;
+use time::{Duration, UtcDateTime};
 #[cfg(feature = "server")]
 use tokio::{
     fs,
@@ -194,15 +194,17 @@ where
 macro_rules! caching_hashmap {
     ($fn_name:ident, $key:ty, $return:ty, $closure:expr, $const:ident, $interval:expr) => {
         #[cfg(feature = "server")]
-        static $const: OnceLock<DashMap<$key, $return>> = OnceLock::new();
-        #[cfg(feature = "server")]
-        static ${ concat($const, _LAST_FETCH) }:
-            LazyLock<DashMap<$key, Arc<Mutex<UtcDateTime>>>> = LazyLock::new(DashMap::new); // initialize to min so the first access is always identified as after it
+        static $const: crate::spotify::caching::Cache<$key, $return> = crate::spotify::caching::Cache {
+            in_mem_cache: std::sync::OnceLock::new(),
+            last_fetched: std::sync::LazyLock::new(dashmap::DashMap::new),
+            interval: $interval,
+            name: stringify!($fn_name),
+        };
 
         /// Server-only function, returns output directly
         #[cfg(feature = "server")]
         pub async fn ${ concat($fn_name, _server) }(key: $key) -> $return {
-            caching_hashmap($closure, key, &$const, &${ concat($const, _LAST_FETCH) }, $interval, stringify!($fn_name)).await
+            $const.caching_hashmap(key, $closure).await
         }
 
         /// Client-Server function, returns Result for transport errors
@@ -221,95 +223,98 @@ macro_rules! caching_hashmap {
 }
 
 #[cfg(feature = "server")]
-pub async fn caching_hashmap<K, V, F, Fut>(
-    f: F,
-    key: K,
-    in_mem_cache: &'static OnceLock<DashMap<K, V>>,
-    last_fetched: &'static DashMap<K, Arc<Mutex<UtcDateTime>>>,
-    interval: time::Duration,
-    name: &str,
-) -> V
-where
-    K: Hash + Eq + Serialize + DeserializeOwned + Clone + Send + Sync + Display,
-    V: Clone + Serialize + DeserializeOwned + Send + Sync,
-    F: Fn(K, Option<V>) -> Fut + Send + 'static,
-    Fut: Future<Output = V> + Send + 'static,
-{
-    let now = UtcDateTime::now();
+pub use server_only::*;
 
-    let read_mem_cache = || -> Option<V> {
-        in_mem_cache
-            .get()
-            .and_then(|map| map.get(&key).map(|val| val.clone()))
+#[cfg(feature = "server")]
+mod server_only {
+    use dashmap::DashMap;
+    use dashmap::mapref::one::Ref;
+    use dioxus::prelude::*;
+    use dioxus_sdk_time::use_interval;
+    use serde::{Serialize, de::DeserializeOwned};
+    use std::env::home_dir;
+    use std::{
+        fmt::Display,
+        hash::Hash,
+        sync::{Arc, LazyLock, OnceLock},
+    };
+    use time::{Duration, UtcDateTime};
+    use tokio::{
+        fs,
+        sync::{Mutex, MutexGuard, RwLock},
+        time::{Duration as TokioDuration, sleep},
     };
 
-    let in_mem_cached = read_mem_cache();
-    let mutex = Arc::clone(
-        &*last_fetched
-            .entry(key.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(UtcDateTime::MIN))),
-    );
-    let needs_update = mutex
-        .try_lock_owned()
-        .map(|last_fetched| (now > *last_fetched + interval, last_fetched));
-    match (in_mem_cached, needs_update) {
-        // there is a cached value, and it doesn't need updating
-        (Some(cached), Ok((false, _))) | (Some(cached), Err(_)) => cached.clone(),
-        // no other request is currently updating the value, and it needs updating; update it
-        (in_mem_cached, Ok((true, guard))) => {
-            use tokio::sync::OwnedMutexGuard;
+    pub struct Cache<K, V> {
+        pub in_mem_cache: OnceLock<DashMap<K, V>>,
+        pub last_fetched: LazyLock<DashMap<K, Arc<Mutex<UtcDateTime>>>>,
+        pub interval: Duration,
+        pub name: &'static str,
+    }
+    impl<K, V> Cache<K, V>
+    where
+        K: Hash + Eq + Serialize + DeserializeOwned + Clone + Send + Sync + Display,
+        V: Clone + Serialize + DeserializeOwned + Send + Sync,
+    {
+        fn read_in_mem_cache<'a, 'b>(&'a self, key: &'b K) -> Option<Ref<'a, K, V>> {
+            self.in_mem_cache.get().and_then(|map| map.get(&key))
+        }
+        pub async fn caching_hashmap<F, Fut>(&'static self, key: K, f: F) -> V
+        where
+            F: Fn(K, Option<V>) -> Fut + Send + Sync + 'static,
+            Fut: Future<Output = V> + Send + 'static,
+        {
+            let read_mem_cache =
+                || -> Option<V> { self.read_in_mem_cache(&key).map(|val| val.clone()) };
 
-            let key_clone = key.clone();
-            let write_mem_cache = move |value: V| {
-                let map = in_mem_cache.get_or_init(DashMap::new);
-                map.insert(key_clone, value);
-            };
+            let now = UtcDateTime::now();
 
-            let disk_cache_path = home_dir().map(|mut path| {
-                path.push(format!(".cache/dash/{name}/{key}.json"));
-                path
-            });
-            let disk_cache_path_clone = disk_cache_path.clone();
-            let write_mem_cache_clone = write_mem_cache.clone();
-            let write_mem_and_disk_cache = async move |value: V| {
-                write_mem_cache_clone(value.clone());
-                let path = disk_cache_path_clone?;
-                fs::create_dir_all(path.parent()?).await.ok()?;
-                fs::write(path, serde_json::to_string(&value).ok()?)
-                    .await
-                    .ok()
-            };
+            let in_mem_cached = read_mem_cache();
+            let mutex = Arc::clone(
+                &*self
+                    .last_fetched
+                    .entry(key.clone())
+                    .or_insert_with(|| Arc::new(Mutex::new(UtcDateTime::MIN))),
+            );
+            let needs_update = mutex
+                .try_lock_owned()
+                .map(|last_fetched| (now > *last_fetched + self.interval, last_fetched));
+            match (in_mem_cached, needs_update) {
+                // there is a cached value, and it doesn't need updating
+                (Some(cached), Ok((false, _))) | (Some(cached), Err(_)) => cached.clone(),
+                // no other request is currently updating the value, and it needs updating; update it
+                (in_mem_cached, Ok((true, guard))) => {
+                    use tokio::sync::OwnedMutexGuard;
 
-            let update_and_drop_last_fetched = move |mut guard: OwnedMutexGuard<_>| {
-                *guard = UtcDateTime::now();
-                drop(guard);
-            };
-
-            match in_mem_cached {
-                // fetch and write new value to cache in the background
-                Some(cached) => {
-                    let clone = cached.clone();
-                    tokio::spawn(async move {
-                        write_mem_and_disk_cache(f(key, Some(clone)).await).await;
-
-                        // hold lock until all caches are updated
-                        update_and_drop_last_fetched(guard);
-                    });
-
-                    cached.clone()
-                }
-                None => {
-                    let read_disk_cache = async || -> Option<V> {
-                        serde_json::from_str::<V>(
-                            &fs::read_to_string(disk_cache_path.clone()?).await.ok()?,
-                        )
-                        .ok()
+                    let key_clone = key.clone();
+                    let write_mem_cache = move |value: V| {
+                        let map = self.in_mem_cache.get_or_init(DashMap::new);
+                        map.insert(key_clone, value);
                     };
-                    match read_disk_cache().await {
-                        // update asynchronously, return cached value
-                        Some(cached) => {
-                            write_mem_cache(cached.clone());
 
+                    let disk_cache_path = home_dir().map(|mut path| {
+                        path.push(format!(".cache/dash/{}/{key}.json", self.name));
+                        path
+                    });
+                    let disk_cache_path_clone = disk_cache_path.clone();
+                    let write_mem_cache_clone = write_mem_cache.clone();
+                    let write_mem_and_disk_cache = async move |value: V| {
+                        write_mem_cache_clone(value.clone());
+                        let path = disk_cache_path_clone?;
+                        fs::create_dir_all(path.parent()?).await.ok()?;
+                        fs::write(path, serde_json::to_string(&value).ok()?)
+                            .await
+                            .ok()
+                    };
+
+                    let update_and_drop_last_fetched = move |mut guard: OwnedMutexGuard<_>| {
+                        *guard = UtcDateTime::now();
+                        drop(guard);
+                    };
+
+                    match in_mem_cached {
+                        // fetch and write new value to cache in the background
+                        Some(cached) => {
                             let clone = cached.clone();
                             tokio::spawn(async move {
                                 write_mem_and_disk_cache(f(key, Some(clone)).await).await;
@@ -320,30 +325,54 @@ where
 
                             cached.clone()
                         }
-                        // update synchronously, return new value once its available
                         None => {
-                            let new_value = f(key, None).await;
-                            write_mem_and_disk_cache(new_value.clone()).await;
+                            let read_disk_cache = async || -> Option<V> {
+                                serde_json::from_str::<V>(
+                                    &fs::read_to_string(disk_cache_path.clone()?).await.ok()?,
+                                )
+                                .ok()
+                            };
+                            match read_disk_cache().await {
+                                // update asynchronously, return cached value
+                                Some(cached) => {
+                                    write_mem_cache(cached.clone());
 
-                            // hold lock until all caches are updated
-                            update_and_drop_last_fetched(guard);
+                                    let clone = cached.clone();
+                                    tokio::spawn(async move {
+                                        write_mem_and_disk_cache(f(key, Some(clone)).await).await;
 
-                            new_value
+                                        // hold lock until all caches are updated
+                                        update_and_drop_last_fetched(guard);
+                                    });
+
+                                    cached.clone()
+                                }
+                                // update synchronously, return new value once its available
+                                None => {
+                                    let new_value = f(key, None).await;
+                                    write_mem_and_disk_cache(new_value.clone()).await;
+
+                                    // hold lock until all caches are updated
+                                    update_and_drop_last_fetched(guard);
+
+                                    new_value
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
-        // cache not yet initialized, but another request is currently doing so; wait for that to complete
-        (None, Err(_)) => loop {
-            if let Some(value) = read_mem_cache() {
-                return value.clone();
-            }
+                // cache not yet initialized, but another request is currently doing so; wait for that to complete
+                (None, Err(_)) => loop {
+                    if let Some(value) = read_mem_cache() {
+                        return value.clone();
+                    }
 
-            sleep(TokioDuration::from_millis(100)).await;
-        },
-        (None, Ok((false, _))) => {
-            panic!("If the value doesn't need updating, there should be a cached value")
+                    sleep(TokioDuration::from_millis(100)).await;
+                },
+                (None, Ok((false, _))) => {
+                    panic!("If the value doesn't need updating, there should be a cached value")
+                }
+            }
         }
     }
 }
