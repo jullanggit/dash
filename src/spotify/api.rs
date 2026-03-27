@@ -57,7 +57,10 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
                         "user-read-playback-state",
                         "playlist-read-private",
                         "playlist-read-collaborative",
-                        "user-library-read"
+                        "user-library-read",
+                        "user-read-currently-playing",
+                        "user-read-playback-state",
+                        "user-modify-playback-state"
                     ),
                     ..Default::default()
                 },
@@ -352,6 +355,53 @@ caching!(
     QUEUE,
     Duration::seconds(1)
 );
+#[cfg(feature = "server")]
+pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> {
+    use rspotify_model::{SimplifiedAlbum, Type};
+    use std::collections::HashMap;
+
+    let spotify = spotify().await;
+    let res = retrying(
+        move |(spotify, track)| async move { spotify.add_item_to_queue(track.into(), None).await },
+        (spotify, track.clone()),
+    )
+    .await;
+    if let Err(e) = res {
+        Err(anyhow::anyhow!("Failed to add track {track} to queue: {e}"))
+    } else {
+        QUEUE
+            .in_mem_cache
+            .write()
+            .await
+            .get_or_insert_default()
+            .insert(
+                0,
+                // dummy item with id set
+                PlayableItem::Track(FullTrack {
+                    album: SimplifiedAlbum::default(),
+                    artists: Vec::new(),
+                    available_markets: Vec::new(),
+                    disc_number: 0,
+                    duration: Default::default(),
+                    explicit: false,
+                    external_ids: HashMap::new(),
+                    external_urls: HashMap::new(),
+                    href: None,
+                    id: Some(track),
+                    is_local: false,
+                    is_playable: None,
+                    linked_from: None,
+                    restrictions: None,
+                    name: String::new(),
+                    popularity: 0,
+                    preview_url: None,
+                    track_number: 0,
+                    r#type: Type::Track,
+                }),
+            );
+        Ok(())
+    }
+}
 
 // TODO: maybe return None if there are no ratings yet and display that in the ui
 #[server]

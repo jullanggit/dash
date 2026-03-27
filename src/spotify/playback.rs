@@ -18,8 +18,8 @@ pub async fn handle_weighted_playback() -> ! {
 #[cfg(feature = "server")]
 async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) {
     use crate::spotify::{
-        playback_state_server, playlist_tracks_server, queue_server, retrying, saved_tracks_server,
-        spotify, weighted_playback_enabled_server,
+        add_to_queue, playback_state_server, playlist_tracks_server, queue_server, retrying,
+        saved_tracks_server, spotify, weighted_playback_enabled_server,
     };
     use rspotify::prelude::OAuthClient;
     use rspotify_model::{FullTrack, PlayableItem};
@@ -31,7 +31,9 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
         queue
             .iter()
             .filter(|item| {
-                if let PlayableItem::Track(FullTrack { id: Some(id), .. }) = item
+                if let PlayableItem::Track(FullTrack {
+                    id: Some(id), name, ..
+                }) = item
                     && *id == track_id
                 {
                     true
@@ -85,15 +87,9 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
             let track = choose_random_song(&tracks, &ratings);
 
             if let Some(track) = track {
-                let res = retrying(
-                    move |(spotify, track)| async move {
-                        spotify.add_item_to_queue(track.into(), None).await
-                    },
-                    (spotify, track.clone()),
-                )
-                .await;
+                let res = add_to_queue(track.clone()).await;
                 if let Err(e) = res {
-                    warn!("Failed to add track {track} to queue: {e}")
+                    warn!("{e}")
                 } else {
                     *last_queued = Some((track.clone(), num_in_queue(track) + 1))
                 }
