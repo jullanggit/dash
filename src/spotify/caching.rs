@@ -157,7 +157,7 @@ mod server_only {
         type K: CacheKey;
         type V: CacheValue;
 
-        async fn read_in_mem_cache<'a, 'b>(&self, key: &Self::K) -> Option<Self::V>;
+        fn read_in_mem_cache(&self, key: &Self::K) -> impl Future<Output = Option<Self::V>> + Send;
         fn try_lock_last_fetched(&'static self, key: &Self::K)
         -> Result<Self::Guard, TryLockError>;
         fn interval(&self) -> Duration;
@@ -166,98 +166,106 @@ mod server_only {
 
         /// Return the result of `f`, caching to memory and disk, updating ever `interval`.
         /// While the value is being updated, stale values are handed out, without waiting for the update to finish.
-        async fn caching<F, Fut>(&'static self, key: Self::K, f: F) -> Self::V
+        fn caching<F, Fut>(
+            &'static self,
+            key: Self::K,
+            f: F,
+        ) -> impl Future<Output = Self::V> + Send
         where
             F: Fn(Self::K, Option<Self::V>) -> Fut + Send + Sync + 'static,
             Fut: Future<Output = Self::V> + Send + 'static,
         {
-            let read_mem_cache = async || -> Option<Self::V> { self.read_in_mem_cache(&key).await };
+            async move {
+                let now = UtcDateTime::now();
 
-            let now = UtcDateTime::now();
-
-            let in_mem_cached = read_mem_cache().await;
-            let needs_update = self
-                .try_lock_last_fetched(&key)
-                .map(|last_fetched| (now > *last_fetched + self.interval(), last_fetched));
-            match (in_mem_cached, needs_update) {
-                // there is a cached value, and it doesn't need updating
-                (Some(cached), Ok((false, _))) | (Some(cached), Err(_)) => cached.clone(),
-                // no other request is currently updating the value, and it needs updating; update it
-                (in_mem_cached, Ok((true, guard))) => {
-                    let key_clone = key.clone();
-                    let write_mem_and_disk_cache = async move |value: Self::V| {
-                        let path = self.disk_cache_path(&key_clone)?;
-                        self.write_mem_cache(key_clone, value.clone()).await;
-                        fs::create_dir_all(path.parent()?).await.ok()?;
-                        fs::write(path, serde_json::to_string(&value).ok()?)
-                            .await
-                            .ok()
-                    };
-
-                    let update_and_drop_last_fetched = move |mut guard: Self::Guard| {
-                        *guard = UtcDateTime::now();
-                        drop(guard);
-                    };
-
-                    match in_mem_cached {
-                        // fetch and write new value to cache in the background
-                        Some(cached) => {
-                            let clone = cached.clone();
-                            tokio::spawn(async move {
-                                write_mem_and_disk_cache(f(key, Some(clone)).await).await;
-
-                                // hold lock until all caches are updated
-                                update_and_drop_last_fetched(guard);
-                            });
-
-                            cached.clone()
-                        }
-                        None => {
-                            let read_disk_cache = async || -> Option<Self::V> {
-                                serde_json::from_str::<Self::V>(
-                                    &fs::read_to_string(self.disk_cache_path(&key)?).await.ok()?,
-                                )
+                let in_mem_cached = self.read_in_mem_cache(&key).await;
+                let needs_update = self
+                    .try_lock_last_fetched(&key)
+                    .map(|last_fetched| (now > *last_fetched + self.interval(), last_fetched));
+                match (in_mem_cached, needs_update) {
+                    // there is a cached value, and it doesn't need updating
+                    (Some(cached), Ok((false, _))) | (Some(cached), Err(_)) => cached.clone(),
+                    // no other request is currently updating the value, and it needs updating; update it
+                    (in_mem_cached, Ok((true, guard))) => {
+                        let key_clone = key.clone();
+                        let write_mem_and_disk_cache = async move |value: Self::V| {
+                            let path = self.disk_cache_path(&key_clone)?;
+                            self.write_mem_cache(key_clone, value.clone()).await;
+                            fs::create_dir_all(path.parent()?).await.ok()?;
+                            fs::write(path, serde_json::to_string(&value).ok()?)
+                                .await
                                 .ok()
-                            };
-                            match read_disk_cache().await {
-                                // update asynchronously, return cached value
-                                Some(cached) => {
-                                    self.write_mem_cache(key.clone(), cached.clone()).await;
+                        };
 
-                                    let clone = cached.clone();
-                                    tokio::spawn(async move {
-                                        write_mem_and_disk_cache(f(key, Some(clone)).await).await;
+                        let update_and_drop_last_fetched = move |mut guard: Self::Guard| {
+                            *guard = UtcDateTime::now();
+                            drop(guard);
+                        };
 
-                                        // hold lock until all caches are updated
-                                        update_and_drop_last_fetched(guard);
-                                    });
-
-                                    cached.clone()
-                                }
-                                // update synchronously, return new value once its available
-                                None => {
-                                    let new_value = f(key, None).await;
-                                    write_mem_and_disk_cache(new_value.clone()).await;
+                        match in_mem_cached {
+                            // fetch and write new value to cache in the background
+                            Some(cached) => {
+                                let clone = cached.clone();
+                                tokio::spawn(async move {
+                                    write_mem_and_disk_cache(f(key, Some(clone)).await).await;
 
                                     // hold lock until all caches are updated
                                     update_and_drop_last_fetched(guard);
+                                });
 
-                                    new_value
+                                cached.clone()
+                            }
+                            None => {
+                                let disk_cached = match self.disk_cache_path(&key) {
+                                    Some(path) => match fs::read_to_string(path).await {
+                                        Ok(contents) => {
+                                            serde_json::from_str::<Self::V>(&contents).ok()
+                                        }
+                                        Err(_) => None,
+                                    },
+                                    None => None,
+                                };
+                                match disk_cached {
+                                    // update asynchronously, return cached value
+                                    Some(cached) => {
+                                        self.write_mem_cache(key.clone(), cached.clone()).await;
+
+                                        let clone = cached.clone();
+                                        tokio::spawn(async move {
+                                            write_mem_and_disk_cache(f(key, Some(clone)).await)
+                                                .await;
+
+                                            // hold lock until all caches are updated
+                                            update_and_drop_last_fetched(guard);
+                                        });
+
+                                        cached.clone()
+                                    }
+                                    // update synchronously, return new value once its available
+                                    None => {
+                                        let new_value = f(key, None).await;
+                                        write_mem_and_disk_cache(new_value.clone()).await;
+
+                                        // hold lock until all caches are updated
+                                        update_and_drop_last_fetched(guard);
+
+                                        new_value
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                // cache not yet initialized, but another request is currently doing so; wait for that to complete
-                (None, Err(_)) => loop {
-                    if let Some(value) = read_mem_cache().await {
-                        return value.clone();
-                    }
+                    // cache not yet initialized, but another request is currently doing so; wait for that to complete
+                    (None, Err(_)) => loop {
+                        if let Some(value) = self.read_in_mem_cache(&key).await {
+                            return value.clone();
+                        }
 
-                    sleep(TokioDuration::from_millis(100)).await;
-                },
-                (None, Ok((false, _))) => {
-                    panic!("If the value doesn't need updating, there should be a cached value")
+                        sleep(TokioDuration::from_millis(100)).await;
+                    },
+                    (None, Ok((false, _))) => {
+                        panic!("If the value doesn't need updating, there should be a cached value")
+                    }
                 }
             }
         }
@@ -281,16 +289,16 @@ mod server_only {
             self.interval
         }
 
-        async fn read_in_mem_cache<'a, 'b>(&self, _: &Self::K) -> Option<Self::V> {
-            self.in_mem_cache.read().await.clone()
+        fn read_in_mem_cache(&self, _: &Self::K) -> impl Future<Output = Option<Self::V>> + Send {
+            async move { self.in_mem_cache.read().await.clone() }
         }
 
         fn try_lock_last_fetched(&'static self, _: &Self::K) -> Result<Self::Guard, TryLockError> {
             self.last_fetched.try_lock()
         }
 
-        async fn write_mem_cache(&self, _: Self::K, value: Self::V) {
-            *self.in_mem_cache.write().await = Some(value)
+        fn write_mem_cache(&self, _: Self::K, value: Self::V) -> impl Future<Output = ()> + Send {
+            async move { *self.in_mem_cache.write().await = Some(value) }
         }
 
         fn disk_cache_path(&self, _: &Self::K) -> Option<PathBuf> {
@@ -320,10 +328,12 @@ mod server_only {
             self.interval
         }
 
-        async fn read_in_mem_cache<'a, 'b>(&self, key: &Self::K) -> Option<Self::V> {
-            self.in_mem_cache
+        fn read_in_mem_cache(&self, key: &Self::K) -> impl Future<Output = Option<Self::V>> + Send {
+            let value = self
+                .in_mem_cache
                 .get()
-                .and_then(|map| map.get(&key).map(|val| val.clone()))
+                .and_then(|map| map.get(key).map(|val| val.clone()));
+            async move { value }
         }
 
         fn try_lock_last_fetched(&self, key: &Self::K) -> Result<Self::Guard, TryLockError> {
@@ -335,9 +345,11 @@ mod server_only {
             );
             mutex.try_lock_owned()
         }
-        async fn write_mem_cache(&self, key: Self::K, value: Self::V) {
+        fn write_mem_cache(&self, key: Self::K, value: Self::V) -> impl Future<Output = ()> + Send {
             let map = self.in_mem_cache.get_or_init(DashMap::new);
-            map.insert(key, value);
+            async move {
+                map.insert(key, value);
+            }
         }
 
         fn disk_cache_path(&self, key: &Self::K) -> Option<PathBuf> {

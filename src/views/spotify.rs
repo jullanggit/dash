@@ -51,7 +51,10 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
         else {
             return None;
         };
-        let mut genres = genres(&artists).await.into_iter().collect::<Vec<_>>();
+        let mut genres = genres(artists.clone())
+            .await
+            .into_iter()
+            .collect::<Vec<_>>();
         genres.sort();
         Some(genres)
     });

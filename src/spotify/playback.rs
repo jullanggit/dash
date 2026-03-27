@@ -22,7 +22,7 @@ async fn queue_random_song() {
     };
     use rspotify::prelude::OAuthClient;
 
-    let spotify = spotify().await;
+    let spotify = spotify().await.clone();
 
     // only queue a song if the queue is empty
     let queue = queue_server().await;
@@ -39,14 +39,15 @@ async fn queue_random_song() {
     {
         let tracks = match _type {
             Type::Playlist => {
-                let id =
-                    PlaylistId::from_id(uri).expect("_type = playlist uri should be a playlist id");
+                let id = PlaylistId::from_id(uri)
+                    .expect("_type = playlist uri should be a playlist id")
+                    .into_static();
                 if weighted_playback_enabled_server().await.contains(&id) {
                     Some(
                         playlist_tracks_server(id)
                             .await
                             .iter()
-                            .filter_map(|track| track.id.clone())
+                            .filter_map(|track| track.id.clone().map(TrackId::into_static))
                             .collect::<Vec<_>>(),
                     )
                 } else {
@@ -58,11 +59,12 @@ async fn queue_random_song() {
         };
 
         if let Some(tracks) = tracks {
-            let track = choose_random_song(&tracks).await;
+            let ratings = crate::spotify::ratings_server().await;
+            let track = choose_random_song(&tracks, &ratings);
 
             if let Some(track) = track {
                 let res = retrying(
-                    move |(spotify, track)| async {
+                    move |(spotify, track)| async move {
                         spotify.add_item_to_queue(track.into(), None).await
                     },
                     (spotify, track.clone()),
@@ -77,11 +79,12 @@ async fn queue_random_song() {
 }
 
 #[cfg(feature = "server")]
-async fn choose_random_song<'a>(tracks: &'a [TrackId<'_>]) -> Option<TrackId<'a>> {
-    use crate::spotify::ratings_server;
+fn choose_random_song(
+    tracks: &[TrackId<'static>],
+    ratings: &crate::spotify::analyze::Analyzation,
+) -> Option<TrackId<'static>> {
     use rand::{RngExt, rng};
 
-    let ratings = ratings_server().await;
     let weights = tracks
         .iter()
         .map(|track| weight(ratings.rating(track.as_ref())));
@@ -96,7 +99,7 @@ async fn choose_random_song<'a>(tracks: &'a [TrackId<'_>]) -> Option<TrackId<'a>
             value -= weight;
             value <= 0.
         })
-        .map(|(track, _)| track.as_ref())
+        .map(|(track, _)| track.clone())
 }
 
 // TODO: add more parameters, i.e. recently played songs, playlist membership etc.

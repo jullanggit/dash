@@ -62,32 +62,38 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     }
 
     // track analyzations
-    for (track, analyzation) in &mut tracks {
-        analyzation
-            .rating_history
-            .sort_unstable_by_key(|&(time, _)| time);
+    for i in 0..tracks.len() {
+        let artists = {
+            let (track, analyzation) = &mut tracks[i];
 
-        analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
-            .map(|i| {
-                (
-                    analyzation.rating_history[i - 1].0,
-                    canonical_rating(
-                        analyzation
-                            .rating_history
-                            .iter()
-                            .take(i)
-                            .map(|&(time, rating)| (rating, time)),
-                    ),
-                )
-            })
-            .collect();
-        analyzation.canonical_rating = analyzation
-            .canonical_rating_history
-            .last()
-            .map(|(_, rating)| *rating)
-            .unwrap_or(DEFAULT_RATING);
+            analyzation
+                .rating_history
+                .sort_unstable_by_key(|&(time, _)| time);
 
-        analyzation.genres = genres(&track.artists).await;
+            analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
+                .map(|i| {
+                    (
+                        analyzation.rating_history[i - 1].0,
+                        canonical_rating(
+                            analyzation
+                                .rating_history
+                                .iter()
+                                .take(i)
+                                .map(|&(time, rating)| (rating, time)),
+                        ),
+                    )
+                })
+                .collect();
+            analyzation.canonical_rating = analyzation
+                .canonical_rating_history
+                .last()
+                .map(|(_, rating)| *rating)
+                .unwrap_or(DEFAULT_RATING);
+
+            track.artists.clone()
+        };
+
+        tracks[i].1.genres = genres(artists).await;
     }
 
     // cross-track analyzations

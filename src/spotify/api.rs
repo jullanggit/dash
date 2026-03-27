@@ -83,7 +83,7 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
 caching!(
     rating_playlists,
     Vec<(f32, SimplifiedPlaylist)>,
-    async |(), _previous| {
+    |_, _| async move {
         let spotify = spotify().await;
         let mut playlists = Vec::new();
 
@@ -202,7 +202,7 @@ caching!(
     ratings,
     Analyzation,
     // get ratings. Only re-fetch ratings within the last 15 minutes.
-    async |(), previous| {
+    |_, previous| async move {
         use crate::spotify::analyze::analyze;
 
         let spotify = spotify().await.clone();
@@ -267,9 +267,7 @@ caching!(
                                 entry.rating_history.push(data);
                             }
                         }
-                        other => {
-                            error!("Unexpected format for rating playlist entry: {other:?}")
-                        }
+                        other => error!("Unexpected format for rating playlist entry: {other:?}"),
                     },
                     Err(e) => error!("Failed to get playlist items: {e}"),
                 }
@@ -286,7 +284,7 @@ caching!(
     saved_tracks,
     HashSet<TrackId<'static>>,
     // get ratings. Only re-fetch ratings within the last 15 minutes.
-    async |(), previous| {
+    |_, previous| async move {
         let spotify = spotify().await;
         let mut saved_tracks = previous.unwrap_or_default();
 
@@ -330,7 +328,7 @@ caching!(
 caching!(
     playback_state,
     Option<CurrentPlaybackContext>,
-    async |(), _previous| {
+    |_, _| async move {
         trace!("Getting playback state");
 
         let spotify = spotify().await;
@@ -349,7 +347,7 @@ caching!(
 caching!(
     queue,
     Vec<PlayableItem>,
-    async |(), _| {
+    |_, _| async move {
         trace!("Getting queue");
 
         let spotify = spotify().await;
@@ -375,7 +373,7 @@ caching_hashmap!(
     full_artist,
     ArtistId<'static>,
     FullArtist,
-    async |artist_id, _| {
+    |artist_id, _| async move {
         info!("Getting artist with id {artist_id}");
 
         let spotify = spotify().await;
@@ -394,12 +392,12 @@ caching_hashmap!(
     Duration::weeks(4) // assume artists are mostly static
 );
 
-pub async fn genres(artists: &[SimplifiedArtist]) -> HashSet<String> {
+pub async fn genres(artists: Vec<SimplifiedArtist>) -> HashSet<String> {
     let mut genres = HashSet::new();
 
-    for artist in artists.iter() {
-        if let Some(ref artist_id) = artist.id {
-            let full_artist = match full_artist(artist_id.clone()).await {
+    for artist in artists {
+        if let Some(artist_id) = artist.id.map(ArtistId::into_static) {
+            let full_artist = match full_artist(artist_id).await {
                 Ok(artist) => artist,
                 Err(e) => {
                     error!("Failed to fetch artist {}: {e}", artist.name);
@@ -419,7 +417,7 @@ caching_hashmap!(
     playlist_tracks,
     PlaylistId<'static>,
     Vec<FullTrack>,
-    async |playlist_id, _| {
+    |playlist_id, _| async move {
         let spotify = spotify().await;
 
         let mut out = Vec::new();
@@ -442,9 +440,7 @@ caching_hashmap!(
                         item: Some(PlayableItem::Track(track)),
                         ..
                     } => out.push(track),
-                    other => {
-                        info!("Non-track playlist entry: {other:?}")
-                    }
+                    other => info!("Non-track playlist entry: {other:?}"),
                 },
                 Err(e) => error!("Failed to get playlist items: {e}"),
             }
@@ -460,7 +456,7 @@ caching_hashmap!(
 caching!(
     weighted_playback_enabled,
     HashSet<PlaylistId<'static>>,
-    async |(), previous| { previous.unwrap_or_default() },
+    |_, previous| async move { previous.unwrap_or_default() },
     WEIGHTED_PLAYBACK_ENABLED,
     Duration::weeks(52)
 );
