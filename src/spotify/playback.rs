@@ -4,8 +4,9 @@ use std::time::Duration;
 
 #[cfg(feature = "server")]
 pub async fn handle_weighted_playback() -> ! {
+    let mut last_queued = None;
     loop {
-        queue_random_song().await;
+        queue_random_song(&mut last_queued).await;
 
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
@@ -15,19 +16,40 @@ pub async fn handle_weighted_playback() -> ! {
 // - only add a song to queue if it is empty
 // - store user settings for which playlists should be affected
 #[cfg(feature = "server")]
-async fn queue_random_song() {
+async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) {
     use crate::spotify::{
         playback_state_server, playlist_tracks_server, queue_server, retrying, saved_tracks_server,
         spotify, weighted_playback_enabled_server,
     };
     use rspotify::prelude::OAuthClient;
+    use rspotify_model::{FullTrack, PlayableItem};
 
     let spotify = spotify().await.clone();
 
-    // only queue a song if the queue is empty
     let queue = queue_server().await;
-    if !queue.is_empty() {
-        return;
+    let num_in_queue = |track_id| {
+        queue
+            .iter()
+            .filter(|item| {
+                if let PlayableItem::Track(FullTrack { id: Some(id), .. }) = item
+                    && *id == track_id
+                {
+                    true
+                } else {
+                    false
+                }
+            })
+            .count()
+    };
+
+    // only queue a song if the last one is no longer in the queue
+    if let Some((track_id, times)) = last_queued {
+        use rspotify_model::PlayableItem;
+
+        // we have to guard against the song already having been in the queue before us queuing
+        if num_in_queue(track_id.clone()) >= *times {
+            return;
+        }
     }
 
     let context = playback_state_server().await;
@@ -72,6 +94,8 @@ async fn queue_random_song() {
                 .await;
                 if let Err(e) = res {
                     warn!("Failed to add track {track} to queue: {e}")
+                } else {
+                    *last_queued = Some((track.clone(), num_in_queue(track) + 1))
                 }
             }
         }
