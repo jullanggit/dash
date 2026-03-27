@@ -123,6 +123,6 @@ fn choose_random_song(
 }
 
 // TODO: add more parameters, i.e. recently played songs, playlist membership etc.
-fn weight(rating: f32) -> f32 {
+pub fn weight(rating: f32) -> f32 {
     2f32.powf(rating)
 }

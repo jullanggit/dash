@@ -1,4 +1,7 @@
-use crate::spotify::analyze::{Analyzation, TrackAnalyzation};
+use crate::spotify::{
+    analyze::{Analyzation, TrackAnalyzation},
+    playback::weight,
+};
 use charming::{
     Chart,
     component::{Axis, Legend, Title},
@@ -454,7 +457,7 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
     for (_, analyzation) in &data.tracks {
         for genre in &analyzation.genres {
             let (acc, num) = genre_counts.entry(genre.clone()).or_insert((0.0, 0));
-            *acc += analyzation.canonical_rating;
+            *acc += weight(analyzation.canonical_rating);
             *num += 1;
         }
     }
@@ -464,13 +467,35 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
         .into_iter()
         .map(|(genre, (acc, _))| (acc, genre))
         .collect::<Vec<_>>();
-    cumulative_genre_counts.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
 
     let mut average_genre_counts = genre_counts
         .into_iter()
         .map(|(genre, (acc, num))| (acc / num as f32, genre))
         .collect::<Vec<_>>();
+
+    let max = |collection: &Vec<(f32, String)>| {
+        collection
+            .iter()
+            .map(|(num, _)| *num)
+            .max_by(|a, b| a.total_cmp(b))
+            .unwrap_or(1.) // avoid division by zero
+    };
+    let mut genre_scores = cumulative_genre_counts
+        .iter()
+        .zip(&average_genre_counts)
+        .map(|((cumulative, genre), (average, genre2))| {
+            assert_eq!(genre, genre2);
+
+            (
+                *cumulative / max(&cumulative_genre_counts) + *average / max(&average_genre_counts),
+                genre.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    cumulative_genre_counts.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
     average_genre_counts.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
+    genre_scores.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
 
     base_chart()
         .title(Title::new().text("Genre Cumulative Rating"))
@@ -479,7 +504,7 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
             Pie::new()
                 .rose_type(PieRoseType::Radius)
                 .radius(vec!["50", "150"])
-                .center(vec!["25%", "50%"])
+                .center(vec!["15%", "50%"])
                 .item_style(ItemStyle::new().border_radius(8))
                 .data(cumulative_genre_counts),
         )
@@ -487,7 +512,15 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
             Pie::new()
                 .rose_type(PieRoseType::Radius)
                 .radius(vec!["50", "150"])
-                .center(vec!["75%", "50%"])
+                .center(vec!["50%", "50%"])
+                .item_style(ItemStyle::new().border_radius(8))
+                .data(genre_scores),
+        )
+        .series(
+            Pie::new()
+                .rose_type(PieRoseType::Radius)
+                .radius(vec!["50", "150"])
+                .center(vec!["85%", "50%"])
                 .item_style(ItemStyle::new().border_radius(8))
                 .data(average_genre_counts),
         )
