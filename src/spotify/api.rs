@@ -1,5 +1,3 @@
-#[cfg(feature = "server")]
-use crate::spotify::caching::caching;
 use crate::{
     caching, caching_hashmap,
     spotify::{
@@ -85,7 +83,7 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
 caching!(
     rating_playlists,
     Vec<(f32, SimplifiedPlaylist)>,
-    async |_previous| {
+    async |(), _previous| {
         let spotify = spotify().await;
         let mut playlists = Vec::new();
 
@@ -204,10 +202,10 @@ caching!(
     ratings,
     Analyzation,
     // get ratings. Only re-fetch ratings within the last 15 minutes.
-    async |previous| {
+    async |(), previous| {
         use crate::spotify::analyze::analyze;
 
-        let spotify = spotify().await;
+        let spotify = spotify().await.clone();
         let playlists = rating_playlists_server().await;
         let mut ratings = previous.unwrap_or_default().tracks;
 
@@ -223,8 +221,9 @@ caching!(
         trace!("Getting ratings");
 
         for (rating, playlist) in playlists {
+            let spotify_clone = spotify.clone();
             let mut items = paginate_retrying(move |offset| {
-                let spotify = spotify.clone();
+                let spotify = spotify_clone.clone();
                 let id = playlist.id.clone();
                 async move {
                     trace!("[SPOTIFY API LOG] playlist items, id {id}, offset {offset}");
@@ -287,7 +286,7 @@ caching!(
     saved_tracks,
     HashSet<TrackId<'static>>,
     // get ratings. Only re-fetch ratings within the last 15 minutes.
-    async |previous| {
+    async |(), previous| {
         let spotify = spotify().await;
         let mut saved_tracks = previous.unwrap_or_default();
 
@@ -331,7 +330,7 @@ caching!(
 caching!(
     playback_state,
     Option<CurrentPlaybackContext>,
-    async |_previous| {
+    async |(), _previous| {
         trace!("Getting playback state");
 
         let spotify = spotify().await;
@@ -350,7 +349,7 @@ caching!(
 caching!(
     queue,
     Vec<PlayableItem>,
-    async |_| {
+    async |(), _| {
         trace!("Getting queue");
 
         let spotify = spotify().await;
@@ -461,13 +460,13 @@ caching_hashmap!(
 caching!(
     weighted_playback_enabled,
     HashSet<PlaylistId<'static>>,
-    async |previous| { previous.unwrap_or_default() },
+    async |(), previous| { previous.unwrap_or_default() },
     WEIGHTED_PLAYBACK_ENABLED,
     Duration::weeks(52)
 );
 #[server]
 pub async fn weighted_playback(playlist: PlaylistId<'static>, enabled: bool) -> Result<()> {
-    let mut option = WEIGHTED_PLAYBACK_ENABLED.write().await;
+    let mut option = WEIGHTED_PLAYBACK_ENABLED.in_mem_cache.write().await;
     let set = option.get_or_insert_with(HashSet::new);
     if enabled {
         set.insert(playlist);

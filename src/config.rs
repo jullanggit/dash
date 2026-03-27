@@ -1,6 +1,4 @@
 use crate::caching;
-#[cfg(feature = "server")]
-use crate::spotify::caching::caching;
 use crate::spotify::caching::use_server_fn;
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -12,7 +10,7 @@ use tokio::sync::{Mutex, RwLock};
 caching!(
     config,
     Config,
-    async |_| {
+    async |(), _| {
         trace!("Getting config");
 
         serde_json::from_str(
