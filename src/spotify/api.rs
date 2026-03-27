@@ -25,12 +25,12 @@ use rspotify_model::{
 };
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
-#[cfg(feature = "server")]
-use std::pin::Pin;
 use std::{
     collections::HashSet,
     sync::{Arc, LazyLock, OnceLock},
 };
+#[cfg(feature = "server")]
+use std::{fmt::Debug, pin::Pin};
 use time::{Duration, UtcDateTime};
 #[cfg(feature = "server")]
 use tokio::{
@@ -56,7 +56,8 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
                     scopes: scopes!(
                         "user-read-playback-state",
                         "playlist-read-private",
-                        "playlist-read-collaborative"
+                        "playlist-read-collaborative",
+                        "user-library-read"
                     ),
                     ..Default::default()
                 },
@@ -126,7 +127,7 @@ async fn paginate_retrying<F, Fut, T>(f: F) -> Pin<Box<impl Stream<Item = Client
 where
     F: Fn(u32) -> Fut,
     Fut: Future<Output = ClientResult<Page<T>>>,
-    T: DeserializeOwned,
+    T: DeserializeOwned + Debug,
 {
     let mut offset = 0;
     Box::pin(async_stream::stream! {
@@ -155,7 +156,7 @@ where
     F: Fn(Args) -> Fut,
     Args: Clone,
     Fut: Future<Output = ClientResult<T>>,
-    T: DeserializeOwned,
+    T: DeserializeOwned + Debug,
 {
     let mut num_tries = 0;
     loop {
@@ -183,7 +184,7 @@ where
 
             // wait for retry-after, retry in the next loop, as offset didnt get incremented
             info!(
-                "Retrying {} after {retry_after} seconds: {status_code}",
+                "Retrying {} after {retry_after} seconds: {res:?}",
                 response.url()
             );
             sleep(std::time::Duration::from_secs(retry_after)).await;
