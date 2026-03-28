@@ -446,13 +446,12 @@ caching!(
 /// Returns the [SimplifiedPlaylist] for the given `rating`, creating the playlist if it does not yet exist.
 #[cfg(feature = "server")]
 async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
-    let rounded = (rating * 100.0).round() / 100.0;
-    let playlist_name = format!("{:.2}", rounded);
+    let playlist_name = format!("{:.2}", rating);
 
     if let Some((_, playlist)) = rating_playlists_server()
         .await
         .into_iter()
-        .find(|(playlist_rating, _)| *playlist_rating == rounded)
+        .find(|(playlist_rating, _)| *playlist_rating == rating)
     {
         return Ok(playlist);
     }
@@ -475,9 +474,9 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
     let playlists = cache.get_or_insert_default();
     if !playlists
         .iter()
-        .any(|(playlist_rating, _)| *playlist_rating == rounded)
+        .any(|(playlist_rating, _)| *playlist_rating == rating)
     {
-        playlists.push((rounded, playlist.clone()));
+        playlists.push((rating, playlist.clone()));
     }
 
     Ok(playlist)
@@ -513,9 +512,21 @@ async fn full_track_maybe_cached(
 async fn update_rating_caches(
     playlist: &SimplifiedPlaylist,
     track: &FullTrack,
-    rounded_rating: f32,
+    rating: f32,
 ) -> Result<()> {
     use crate::spotify::analyze::analyze;
+
+    {
+        let mut playlists_cache = RATING_PLAYLISTS.in_mem_cache.write().await;
+        let playlists = playlists_cache.get_or_insert_default();
+
+        if !playlists
+            .iter()
+            .any(|(other_rating, _)| *other_rating == rating)
+        {
+            playlists.push((rating, playlist.clone()));
+        }
+    }
 
     if let Some(items) = PLAYLIST_ITEMS.in_mem_cache.get() {
         use dashmap::mapref::entry::Entry;
@@ -545,9 +556,7 @@ async fn update_rating_caches(
                 .1
         }
     };
-    entry
-        .rating_history
-        .push((UtcDateTime::now(), rounded_rating));
+    entry.rating_history.push((UtcDateTime::now(), rating));
 
     *RATINGS.in_mem_cache.write().await = Some(analyze(tracks).await);
 
@@ -562,6 +571,7 @@ pub async fn rating(track_id: TrackId<'static>) -> Result<f32> {
 
 #[server]
 pub async fn add_rating(track_id: TrackId<'static>, rating: f32) -> Result<()> {
+    let rating = (rating * 100.0).round() / 100.0;
     let playlist = get_or_create_playlist(rating).await?;
     let cached_ratings = ratings_server().await;
     let track = full_track_maybe_cached(&track_id, &cached_ratings).await?;
