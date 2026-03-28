@@ -20,6 +20,7 @@ use std::{
 use time::{Date, Month, UtcDateTime};
 
 const TOP_PROPORTIONS: usize = 100;
+const MAX_CANONICAL_RATING: f32 = 5.0;
 
 pub fn rating_per_song(data: Analyzation) {
     let mut vec = data
@@ -37,35 +38,71 @@ pub fn rating_per_song(data: Analyzation) {
 }
 
 pub fn canonical_rating_distribution(data: &Analyzation) -> Chart {
-    const BIN_SIZE: f32 = 0.25;
-    const NUM_BINS: usize = (5. / BIN_SIZE) as usize;
-    let mut bins = [0_i64; NUM_BINS];
+    const SAMPLE_STEP: f32 = 0.01;
+    const BANDWIDTH: f32 = 0.10;
 
-    for (
-        _,
-        TrackAnalyzation {
-            canonical_rating, ..
-        },
-    ) in &data.tracks
-    {
-        let bin_index = ((*canonical_rating / BIN_SIZE) as usize).min(NUM_BINS - 1);
-        bins[bin_index] += 1;
+    fn distribution_density(ratings: impl IntoIterator<Item = f32>) -> Vec<f32> {
+        let normalization = 1.0 / (BANDWIDTH * (2.0 * std::f32::consts::PI).sqrt());
+        let ratings = ratings.into_iter().collect::<Vec<_>>();
+        let samples = (MAX_CANONICAL_RATING / SAMPLE_STEP).round() as usize;
+
+        if ratings.is_empty() {
+            return vec![0.0; samples + 1];
+        }
+
+        (0..=samples)
+            .map(|index| {
+                let center = index as f32 * SAMPLE_STEP;
+                ratings
+                    .iter()
+                    .map(|rating| {
+                        let standardized = (center - *rating) / BANDWIDTH;
+                        (-0.5 * standardized.powi(2)).exp() * normalization
+                    })
+                    .sum::<f32>()
+                    / ratings.len() as f32
+            })
+            .collect()
     }
+
+    let distribution: Vec<Vec<CompositeValue>> = distribution_density(data.tracks.iter().map(
+        |(
+            _,
+            TrackAnalyzation {
+                canonical_rating, ..
+            },
+        )| *canonical_rating,
+    ))
+    .into_iter()
+    .enumerate()
+    .map(|(index, density)| {
+        let center = index as f32 * SAMPLE_STEP;
+        vec![CompositeValue::from(center), CompositeValue::from(density)]
+    })
+    .collect::<Vec<_>>();
 
     // chart
     base_chart()
         .title(Title::new().text("Canonical Rating Distribution"))
-        .x_axis(Axis::new().type_(AxisType::Category).data(Vec::from_iter(
-            (0..NUM_BINS).map(|num| format!("{:.2}-", num as f32 * BIN_SIZE,)),
-        )))
-        .y_axis(Axis::new().type_(AxisType::Value))
+        .x_axis(
+            Axis::new()
+                .type_(AxisType::Value)
+                .min(0.0)
+                .max(5.0)
+                .interval(0.5),
+        )
+        .y_axis(
+            Axis::new()
+                .type_(AxisType::Value)
+                .axis_label(charming::element::AxisLabel::new().show(false))
+                .split_line(SplitLine::new().show(false)),
+        )
         .series(
             Line::new()
                 .show_symbol(false)
                 .line_style(LineStyle::new().width(0.0))
                 .area_style(AreaStyle::new().color(linear_gradient()).opacity(0.8))
-                .smooth(true)
-                .data(bins.to_vec()),
+                .data(distribution),
         )
 }
 
@@ -618,4 +655,54 @@ pub fn base_chart() -> Chart {
 
     // TODO: see if I can make this preserve lines between off-screen and on-screen datapoints when zooming
     Chart::new().toolbox(Toolbox::new().feature(Feature::new().data_zoom(ToolboxDataZoom::new())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MAX_CANONICAL_RATING;
+
+    fn canonical_rating_distribution_density(ratings: impl IntoIterator<Item = f32>) -> Vec<f32> {
+        const SAMPLE_STEP: f32 = 0.01;
+        const BANDWIDTH: f32 = 0.10;
+
+        let normalization = 1.0 / (BANDWIDTH * (2.0 * std::f32::consts::PI).sqrt());
+        let ratings = ratings.into_iter().collect::<Vec<_>>();
+        let samples = (MAX_CANONICAL_RATING / SAMPLE_STEP).round() as usize;
+
+        if ratings.is_empty() {
+            return vec![0.0; samples + 1];
+        }
+
+        (0..=samples)
+            .map(|index| {
+                let center = index as f32 * SAMPLE_STEP;
+                ratings
+                    .iter()
+                    .map(|rating| {
+                        let standardized = (center - *rating) / BANDWIDTH;
+                        (-0.5 * standardized.powi(2)).exp() * normalization
+                    })
+                    .sum::<f32>()
+                    / ratings.len() as f32
+            })
+            .collect()
+    }
+
+    #[test]
+    fn canonical_distribution_density_peaks_near_the_rating() {
+        let density = canonical_rating_distribution_density([2.0]);
+
+        assert!(density[200] > density[180]);
+        assert!(density[200] > density[220]);
+        assert!((density[180] - density[220]).abs() < 0.0001);
+    }
+
+    #[test]
+    fn canonical_distribution_density_shows_two_clusters_with_a_valley_between() {
+        let density = canonical_rating_distribution_density([1.0, 1.0, 4.0, 4.0]);
+
+        assert!(density[100] > density[250]);
+        assert!(density[400] > density[250]);
+        assert!((density[100] - density[400]).abs() < 0.0001);
+    }
 }
