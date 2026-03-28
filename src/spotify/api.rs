@@ -20,13 +20,15 @@ use rspotify::{
 #[cfg(feature = "server")]
 use rspotify_model::Page;
 use rspotify_model::{
-    ArtistId, CurrentPlaybackContext, FullArtist, FullTrack, PlayableItem, PlaylistId,
-    PlaylistItem, SavedTrack, SimplifiedArtist, SimplifiedPlaylist, TrackId,
+    ArtistId, CurrentPlaybackContext, FullArtist, FullTrack, PlayableId, PlayableItem, PlaylistId,
+    PlaylistItem, PlaylistTracksRef, PrivateUser, SavedTrack, SimplifiedArtist, SimplifiedPlaylist,
+    TrackId,
 };
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
 use std::{
     collections::HashSet,
+    iter,
     sync::{Arc, LazyLock, OnceLock},
 };
 #[cfg(feature = "server")]
@@ -57,6 +59,8 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
                         "user-read-playback-state",
                         "playlist-read-private",
                         "playlist-read-collaborative",
+                        "playlist-modify-private",
+                        "playlist-modify-public",
                         "user-library-read",
                         "user-read-currently-playing",
                         "user-read-playback-state",
@@ -403,10 +407,187 @@ pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> 
     }
 }
 
+#[cfg(feature = "server")]
+fn simplified_playlist(playlist: &rspotify_model::FullPlaylist) -> SimplifiedPlaylist {
+    let items = PlaylistTracksRef {
+        href: playlist.items.href.clone(),
+        total: playlist.items.total,
+    };
+
+    #[allow(deprecated)]
+    SimplifiedPlaylist {
+        collaborative: playlist.collaborative,
+        external_urls: playlist.external_urls.clone(),
+        href: playlist.href.clone(),
+        id: playlist.id.clone(),
+        images: playlist.images.clone(),
+        name: playlist.name.clone(),
+        owner: playlist.owner.clone(),
+        public: playlist.public,
+        snapshot_id: playlist.snapshot_id.clone(),
+        tracks: items.clone(),
+        items,
+    }
+}
+
+caching!(
+    user,
+    PrivateUser,
+    |_, previous| async move {
+        let spotify = spotify().await;
+        retrying(move |_| async move { spotify.me().await }, ())
+            .await
+            .context("Failed to get current Spotify user")
+    },
+    USER,
+    Duration::weeks(52)
+);
+
+/// Returns the [SimplifiedPlaylist] for the given `rating`, creating the playlist if it does not yet exist.
+#[cfg(feature = "server")]
+async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
+    let rounded = (rating * 100.0).round() / 100.0;
+    let playlist_name = format!("{:.2}", rounded);
+
+    if let Some((_, playlist)) = rating_playlists_server()
+        .await
+        .into_iter()
+        .find(|(playlist_rating, _)| *playlist_rating == rounded)
+    {
+        return Ok(playlist);
+    }
+
+    let spotify = spotify().await;
+    let user = user_server().await;
+    let playlist = retrying(
+        move |(spotify, user_id, playlist_name)| async move {
+            spotify
+                .user_playlist_create(user_id.as_ref(), &playlist_name, Some(false), None, None)
+                .await
+        },
+        (spotify, user.id, playlist_name),
+    )
+    .await
+    .context("Failed to create rating playlist")?;
+    let playlist = simplified_playlist(&playlist);
+
+    let mut cache = RATING_PLAYLISTS.in_mem_cache.write().await;
+    let playlists = cache.get_or_insert_default();
+    if !playlists
+        .iter()
+        .any(|(playlist_rating, _)| *playlist_rating == rounded)
+    {
+        playlists.push((rounded, playlist.clone()));
+    }
+
+    Ok(playlist)
+}
+
+/// Returns the [FullTrack] for the given `track_id`.
+/// Checks ratings as cache first, falls back to fetching from the api.
+/// Does not cache the api result.
+#[cfg(feature = "server")]
+async fn full_track_maybe_cached(
+    track_id: &TrackId<'static>,
+    ratings: &Analyzation,
+) -> Result<FullTrack> {
+    if let Some((track, _)) = ratings
+        .tracks
+        .iter()
+        .find(|(track, _)| track.id.as_ref() == Some(track_id))
+    {
+        return Ok(track.clone());
+    }
+
+    let spotify = spotify().await;
+    retrying(
+        move |(spotify, track_id)| async move { spotify.track(track_id, None).await },
+        (spotify, track_id.clone()),
+    )
+    .await
+    .with_context(|| format!("Failed to fetch track {track_id}"))
+    .map_err(Into::into)
+}
+
+#[cfg(feature = "server")]
+async fn update_rating_caches(
+    playlist: &SimplifiedPlaylist,
+    track: &FullTrack,
+    rounded_rating: f32,
+) -> Result<()> {
+    use crate::spotify::analyze::analyze;
+
+    if let Some(items) = PLAYLIST_ITEMS.in_mem_cache.get() {
+        use dashmap::mapref::entry::Entry;
+
+        match items.entry(playlist.id.clone()) {
+            Entry::Occupied(mut entry) => {
+                entry.get_mut().insert(0, track.clone());
+            }
+            Entry::Vacant(entry) if playlist.items.total == 0 => {
+                entry.insert(vec![track.clone()]);
+            }
+            // playlist is not known to be empty, wait for next refetch for source of truth
+            Entry::Vacant(_) => {}
+        }
+    }
+
+    let cached_ratings = ratings_server().await;
+    let mut tracks = cached_ratings.tracks;
+    let entry = match tracks
+        .iter_mut()
+        .find(|(cached_track, _)| cached_track.id.as_ref() == track.id.as_ref())
+    {
+        Some((_, analyzation)) => analyzation,
+        None => {
+            &mut tracks
+                .push_mut((track.clone(), TrackAnalyzation::default()))
+                .1
+        }
+    };
+    entry
+        .rating_history
+        .push((UtcDateTime::now(), rounded_rating));
+
+    *RATINGS.in_mem_cache.write().await = Some(analyze(tracks).await);
+
+    Ok(())
+}
+
 // TODO: maybe return None if there are no ratings yet and display that in the ui
 #[server]
 pub async fn rating(track_id: TrackId<'static>) -> Result<f32> {
     Ok(ratings_server().await.rating(track_id))
+}
+
+#[server]
+pub async fn add_rating(track_id: TrackId<'static>, rating: f32) -> Result<()> {
+    let playlist = get_or_create_playlist(rating).await?;
+    let cached_ratings = ratings_server().await;
+    let track = full_track_maybe_cached(&track_id, &cached_ratings).await?;
+
+    let spotify = spotify().await;
+    retrying(
+        move |(spotify, playlist_id, track_id)| async move {
+            spotify
+                .playlist_add_items(
+                    playlist_id,
+                    iter::once(PlayableId::Track(track_id.as_ref())),
+                    Some(0),
+                )
+                .await
+        },
+        (spotify, playlist.id.clone(), track_id.clone()),
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "Failed to add track {track_id} to rating playlist {}",
+            playlist.id
+        )
+    })?;
+
+    update_rating_caches(&playlist, &track, rating).await
 }
 
 caching_hashmap!(

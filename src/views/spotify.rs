@@ -1,6 +1,8 @@
-use crate::spotify::{caching::use_server_fn, genres, rating as fetch_rating, use_playback_state};
+use crate::spotify::{
+    add_rating, caching::use_server_fn, genres, rating as fetch_rating, use_playback_state,
+};
 use dioxus::prelude::*;
-use rspotify_model::{CurrentPlaybackContext, FullTrack, PlayableItem};
+use rspotify_model::{CurrentPlaybackContext, FullTrack, PlayableItem, TrackId};
 use time::Duration;
 
 #[component]
@@ -32,7 +34,7 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
         })) => id,
         _ => &None,
     });
-    let rating = use_resource(move || {
+    let mut rating = use_resource(move || {
         let id = track_id.read().clone();
         async move {
             match id {
@@ -41,6 +43,7 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
             }
         }
     });
+    let mut pending_rating = use_signal(|| None::<(TrackId<'static>, f32)>);
 
     let genres = use_resource(move || async move {
         // let to avoid holding the 'read' across await points
@@ -74,6 +77,19 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
             }
         });
     let image = track.and_then(|track| track.album.images.first());
+    let current_track_id = track_id.read().clone();
+    let pending_rating_value =
+        pending_rating
+            .read()
+            .as_ref()
+            .and_then(|(pending_track_id, pending_rating)| {
+                (Some(pending_track_id) == current_track_id.as_ref()).then_some(*pending_rating)
+            });
+    let fetched_rating = match &*rating.read() {
+        Some(Some(Ok(rating))) => Some(*rating),
+        _ => None,
+    };
+    let current_rating = pending_rating_value.or(fetched_rating);
     rsx!(
         if let Some(image) = image {
             img {
@@ -85,11 +101,11 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                 if let Some(track) = track {
                     h3 { "{track.name}" }
                 }
-                match &*rating.read() {
-                    Some(Some(Ok(rating))) => format!("Rating: {rating}"),
-                    Some(Some(Err(e))) => format!("Error getting rating: {e}"),
-                    Some(None) => String::new(),
-                    None => "Getting rating...".to_string(),
+                match (current_rating, &*rating.read()) {
+                    (Some(rating), _) => format!("Rating: {rating}"),
+                    (None, Some(Some(Err(e)))) => format!("Error getting rating: {e}"),
+                    (None, Some(None)) => String::new(),
+                    (None, _) => "Getting rating...".to_string(),
                 }
                 br {}
                 match &*genres.read() {
@@ -103,12 +119,21 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                     None => "Getting genres...".to_string(),
                 }
                 HoverSlider {
-                    current_rating: match &*rating.read() {
-                        Some(Some(Ok(rating))) => Some(*rating),
-                        _ => None,
-                    },
-                    on_select: move |progress| {
-                        println!("clicked at progress = {progress}");
+                    current_rating,
+                    on_select: move |selected_rating| async move {
+                        let Some(track_id) = track_id.read().clone() else {
+                            return;
+                        };
+                        match add_rating(track_id.clone(), selected_rating as f32).await {
+                            Ok(()) => {
+                                pending_rating.set(Some((track_id, selected_rating as f32)));
+                                rating.restart();
+                            }
+                            Err(error) => {
+                                pending_rating.set(None);
+                                error!("Failed to submit rating: {error}");
+                            }
+                        }
                     },
                 }
             }
@@ -161,12 +186,11 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
 
             onclick: move |evt| {
                 let x = evt.element_coordinates().x.clamp(0.0, *width.read());
-                let progress = (x / *width.read()).clamp(0.0, 1.0);
-                on_select.call(progress);
+                let rating = ((x / *width.read()).clamp(0.0, 1.0)) * 5.0;
+                on_select.call(rating);
             },
 
-            div {
-                style: "
+            div { style: "
                     position: absolute;
                     inset: 0;
                     display: flex;
@@ -186,15 +210,15 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
             div {
                 style: format!(
                     "
-                        position: absolute;
-                        top: 0;
-                        bottom: 0;
-                        left: {}px;
-                        width: 2px;
-                        background: white;
-                        transform: translateX(-50%);
-                        pointer-events: none;
-                    ",
+                                                                        position: absolute;
+                                                                        top: 0;
+                                                                        bottom: 0;
+                                                                        left: {}px;
+                                                                        width: 2px;
+                                                                        background: white;
+                                                                        transform: translateX(-50%);
+                                                                        pointer-events: none;
+                                                                    ",
                     if *hovered.read() {
                         *cursor_x.read()
                     } else {
