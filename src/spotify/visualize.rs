@@ -19,6 +19,8 @@ use std::{
 };
 use time::{Date, Month, UtcDateTime};
 
+const TOP_PROPORTIONS: usize = 100;
+
 pub fn rating_per_song(data: Analyzation) {
     let mut vec = data
         .tracks
@@ -451,6 +453,21 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
     chart
 }
 
+fn sort_and_limit(mut values: Vec<(f32, String)>) -> Vec<(f32, String)> {
+    values.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
+    values.truncate(TOP_PROPORTIONS);
+    values
+}
+
+fn proportion_pie(center: &str, data: Vec<(f32, String)>) -> Pie {
+    Pie::new()
+        .rose_type(PieRoseType::Radius)
+        .radius(vec!["40", "150"])
+        .center(vec![center, "50%"])
+        .item_style(ItemStyle::new().border_radius(8))
+        .data(data)
+}
+
 pub fn genre_proportions(data: &Analyzation) -> Chart {
     let mut genre_counts: HashMap<String, (f32, u32)> = HashMap::new();
 
@@ -462,68 +479,50 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
         }
     }
 
-    let mut cumulative_genre_counts = genre_counts
+    let cumulative_genre_counts = genre_counts
         .clone()
         .into_iter()
         .map(|(genre, (acc, _))| (acc, genre))
         .collect::<Vec<_>>();
 
-    let mut average_genre_counts = genre_counts
+    let average_genre_counts = genre_counts
         .into_iter()
         .map(|(genre, (acc, num))| (acc / num as f32, genre))
         .collect::<Vec<_>>();
 
-    let max = |collection: &Vec<(f32, String)>| {
+    let max = |collection: &[(f32, String)]| -> f32 {
         collection
             .iter()
             .map(|(num, _)| *num)
             .max_by(|a, b| a.total_cmp(b))
-            .unwrap_or(1.) // avoid division by zero
+            .unwrap_or(1.0)
     };
-    let mut genre_scores = cumulative_genre_counts
+
+    let max_cumulative = max(&cumulative_genre_counts);
+    let max_average = max(&average_genre_counts);
+    let genre_scores = cumulative_genre_counts
         .iter()
         .zip(&average_genre_counts)
         .map(|((cumulative, genre), (average, genre2))| {
             assert_eq!(genre, genre2);
 
             (
-                *cumulative / max(&cumulative_genre_counts) + *average / max(&average_genre_counts),
+                *cumulative / max_cumulative + *average / max_average,
                 genre.clone(),
             )
         })
         .collect::<Vec<_>>();
 
-    cumulative_genre_counts.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
-    average_genre_counts.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
-    genre_scores.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
+    let cumulative_genre_counts = sort_and_limit(cumulative_genre_counts);
+    let average_genre_counts = sort_and_limit(average_genre_counts);
+    let genre_scores = sort_and_limit(genre_scores);
 
     base_chart()
         .title(Title::new().text("Genre Cumulative Rating"))
         .tooltip(Tooltip::new().trigger(Trigger::Item))
-        .series(
-            Pie::new()
-                .rose_type(PieRoseType::Radius)
-                .radius(vec!["40", "150"])
-                .center(vec!["18%", "50%"])
-                .item_style(ItemStyle::new().border_radius(8))
-                .data(cumulative_genre_counts),
-        )
-        .series(
-            Pie::new()
-                .rose_type(PieRoseType::Radius)
-                .radius(vec!["40", "150"])
-                .center(vec!["50%", "50%"])
-                .item_style(ItemStyle::new().border_radius(8))
-                .data(genre_scores),
-        )
-        .series(
-            Pie::new()
-                .rose_type(PieRoseType::Radius)
-                .radius(vec!["40", "150"])
-                .center(vec!["82%", "50%"])
-                .item_style(ItemStyle::new().border_radius(8))
-                .data(average_genre_counts),
-        )
+        .series(proportion_pie("18%", cumulative_genre_counts))
+        .series(proportion_pie("50%", genre_scores))
+        .series(proportion_pie("82%", average_genre_counts))
 }
 
 pub fn artist_proportions(data: &Analyzation) -> Chart {
@@ -537,23 +536,17 @@ pub fn artist_proportions(data: &Analyzation) -> Chart {
         }
     }
 
-    let mut cumulative_artist_counts = artist_counts
-        .into_iter()
-        .map(|(artist, acc)| (acc, artist))
-        .collect::<Vec<_>>();
-    cumulative_artist_counts.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
+    let cumulative_artist_counts = sort_and_limit(
+        artist_counts
+            .into_iter()
+            .map(|(artist, acc)| (acc, artist))
+            .collect(),
+    );
 
     base_chart()
         .title(Title::new().text("Artist Cumulative Rating"))
         .tooltip(Tooltip::new().trigger(Trigger::Item))
-        .series(
-            Pie::new()
-                .rose_type(PieRoseType::Radius)
-                .radius(vec!["40", "150"])
-                .center(vec!["50%", "50%"])
-                .item_style(ItemStyle::new().border_radius(8))
-                .data(cumulative_artist_counts),
-        )
+        .series(proportion_pie("50%", cumulative_artist_counts))
 }
 
 fn release_date_to_timestamp_millis(
