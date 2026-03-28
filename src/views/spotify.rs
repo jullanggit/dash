@@ -120,8 +120,8 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                             return;
                         };
                         match add_rating(track_id.clone(), selected_rating as f32).await {
-                            Ok(()) => {
-                                pending_rating.set(Some((track_id, selected_rating as f32)));
+                            Ok(canonical_rating) => {
+                                pending_rating.set(Some((track_id, canonical_rating)));
                                 rating.restart();
                             }
                             Err(error) => {
@@ -205,15 +205,15 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
             div {
                 style: format!(
                     "
-                                                                                                            position: absolute;
-                                                                                                            top: 0;
-                                                                                                            bottom: 0;
-                                                                                                            left: {}px;
-                                                                                                            width: 2px;
-                                                                                                            background: white;
-                                                                                                            transform: translateX(-50%);
-                                                                                                            pointer-events: none;
-                                                                                                        ",
+                                                                                                                        position: absolute;
+                                                                                                                        top: 0;
+                                                                                                                        bottom: 0;
+                                                                                                                        left: {}px;
+                                                                                                                        width: 2px;
+                                                                                                                        background: white;
+                                                                                                                        transform: translateX(-50%);
+                                                                                                                        pointer-events: none;
+                                                                                                                    ",
                     if *hovered.read() {
                         *cursor_x.read()
                     } else {

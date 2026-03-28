@@ -513,7 +513,7 @@ async fn update_rating_caches(
     playlist: &SimplifiedPlaylist,
     track: &FullTrack,
     rating: f32,
-) -> Result<()> {
+) -> Result<f32> {
     use crate::spotify::analyze::analyze;
 
     {
@@ -558,9 +558,17 @@ async fn update_rating_caches(
     };
     entry.rating_history.push((UtcDateTime::now(), rating));
 
-    *RATINGS.in_mem_cache.write().await = Some(analyze(tracks).await);
+    let updated = analyze(tracks).await;
+    let canonical_rating = updated.rating(
+        track
+            .id
+            .as_ref()
+            .expect("full track used for rating updates should have an id")
+            .as_ref(),
+    );
+    *RATINGS.in_mem_cache.write().await = Some(updated);
 
-    Ok(())
+    Ok(canonical_rating)
 }
 
 // TODO: maybe return None if there are no ratings yet and display that in the ui
@@ -570,7 +578,7 @@ pub async fn rating(track_id: TrackId<'static>) -> Result<f32> {
 }
 
 #[server]
-pub async fn add_rating(track_id: TrackId<'static>, rating: f32) -> Result<()> {
+pub async fn add_rating(track_id: TrackId<'static>, rating: f32) -> Result<f32> {
     let rating = (rating * 100.0).round() / 100.0;
     let playlist = get_or_create_playlist(rating).await?;
     let cached_ratings = ratings_server().await;
@@ -596,7 +604,6 @@ pub async fn add_rating(track_id: TrackId<'static>, rating: f32) -> Result<()> {
             playlist.id
         )
     })?;
-
     update_rating_caches(&playlist, &track, rating).await
 }
 
