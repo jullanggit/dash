@@ -6,6 +6,7 @@ use time::{Date, Duration, UtcDateTime};
 
 // TODO: make this configurable
 pub const DEFAULT_RATING: f32 = 2.5;
+const RATING_OVERWRITE_WINDOW: Duration = Duration::minutes(5);
 
 /// Contains all analyzations derived from `rating_history` and the providing track
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -37,6 +38,24 @@ impl Analyzation {
 
 pub type AnalyzedTracks = Vec<(FullTrack, TrackAnalyzation)>;
 
+fn dedupe_rating_history(rating_history: &mut Vec<(UtcDateTime, f32)>) {
+    rating_history.sort_unstable_by_key(|&(time, _)| time);
+
+    let mut deduped = Vec::with_capacity(rating_history.len());
+    for (time, rating) in rating_history.drain(..) {
+        if let Some((previous_time, previous_rating)) = deduped.last_mut()
+            && time - *previous_time <= RATING_OVERWRITE_WINDOW
+        {
+            *previous_time = time;
+            *previous_rating = rating;
+        } else {
+            deduped.push((time, rating));
+        }
+    }
+
+    *rating_history = deduped;
+}
+
 /// Build analyzation based on tracks and rating histories
 #[cfg(feature = "server")]
 pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
@@ -66,9 +85,7 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
         let artists = {
             let (track, analyzation) = &mut tracks[i];
 
-            analyzation
-                .rating_history
-                .sort_unstable_by_key(|&(time, _)| time);
+            dedupe_rating_history(&mut analyzation.rating_history);
 
             analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
                 .map(|i| {
@@ -145,5 +162,55 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
         average_rating_per_day,
         num_ratings_history,
         num_rated_tracks_history,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dedupe_rating_history;
+    use time::{Date, Duration, Month, Time, UtcDateTime};
+
+    fn date_time(minute: u8) -> UtcDateTime {
+        UtcDateTime::new(
+            Date::from_calendar_date(2024, Month::January, 1).unwrap(),
+            Time::from_hms(0, minute, 0).unwrap(),
+        )
+    }
+
+    #[test]
+    fn ratings_within_five_minutes_overwrite_the_previous_rating() {
+        let mut history = vec![
+            (date_time(0), 2.0),
+            (date_time(4), 4.0),
+            (date_time(10), 3.0),
+        ];
+
+        dedupe_rating_history(&mut history);
+
+        assert_eq!(history, vec![(date_time(4), 4.0), (date_time(10), 3.0)]);
+    }
+
+    #[test]
+    fn ratings_more_than_five_minutes_apart_are_kept() {
+        let mut history = vec![(date_time(0), 2.0), (date_time(6), 4.0)];
+
+        dedupe_rating_history(&mut history);
+
+        assert_eq!(history, vec![(date_time(0), 2.0), (date_time(6), 4.0)]);
+    }
+
+    #[test]
+    fn overwrite_window_is_chained_from_the_latest_rating() {
+        let mut history = vec![
+            (date_time(0), 1.0),
+            (date_time(4), 2.0),
+            (date_time(8), 3.0),
+            (date_time(14), 4.0),
+        ];
+
+        dedupe_rating_history(&mut history);
+
+        assert_eq!(history, vec![(date_time(8), 3.0), (date_time(14), 4.0)]);
+        assert_eq!(history[1].0 - history[0].0, Duration::minutes(6));
     }
 }
