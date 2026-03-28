@@ -526,6 +526,36 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
         )
 }
 
+pub fn artist_proportions(data: &Analyzation) -> Chart {
+    let mut artist_counts: HashMap<String, f32> = HashMap::new();
+
+    for (track, analyzation) in &data.tracks {
+        let track_weight = weight(analyzation.canonical_rating);
+
+        for artist in &track.artists {
+            *artist_counts.entry(artist.name.clone()).or_insert(0.0) += track_weight;
+        }
+    }
+
+    let mut cumulative_artist_counts = artist_counts
+        .into_iter()
+        .map(|(artist, acc)| (acc, artist))
+        .collect::<Vec<_>>();
+    cumulative_artist_counts.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
+
+    base_chart()
+        .title(Title::new().text("Artist Cumulative Rating"))
+        .tooltip(Tooltip::new().trigger(Trigger::Item))
+        .series(
+            Pie::new()
+                .rose_type(PieRoseType::Radius)
+                .radius(vec!["40", "150"])
+                .center(vec!["50%", "50%"])
+                .item_style(ItemStyle::new().border_radius(8))
+                .data(cumulative_artist_counts),
+        )
+}
+
 fn release_date_to_timestamp_millis(
     release_date: &str,
     release_date_precision: Option<&str>,

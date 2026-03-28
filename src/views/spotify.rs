@@ -228,8 +228,9 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
 #[server]
 async fn charts() -> Result<Vec<String>> {
     use crate::spotify::{
-        average_rating_per_day, canonical_rating_correlations, canonical_rating_distribution,
-        genre_proportions, num_ratings_history, ratings_server, song_canonical_rating_histories,
+        artist_proportions, average_rating_per_day, canonical_rating_correlations,
+        canonical_rating_distribution, genre_proportions, num_ratings_history, ratings_server,
+        song_canonical_rating_histories,
     };
 
     use charming::HtmlRenderer;
@@ -245,6 +246,7 @@ async fn charts() -> Result<Vec<String>> {
         song_canonical_rating_histories,
         canonical_rating_correlations,
         genre_proportions,
+        artist_proportions,
     ]
     .into_iter()
     .map(|f| f(&analyzation))
