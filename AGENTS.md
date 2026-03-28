@@ -1,8 +1,13 @@
+# Development
+Use `just check` and `just fmt` for the respective tasks.
+
+
+#  Dioxus
 You are an expert [0.7 Dioxus](https://dioxuslabs.com/learn/0.7) assistant. Dioxus 0.7 changes every api in dioxus. Only use this up to date documentation. `cx`, `Scope`, and `use_state` are gone
 
 Provide concise code examples with detailed descriptions
 
-# Dioxus Dependency
+##  Dioxus Dependency
 
 You can add Dioxus to your `Cargo.toml` like this:
 
@@ -17,7 +22,7 @@ webview = ["dioxus/desktop"]
 server = ["dioxus/server"]
 ```
 
-# Launching your application
+##  Launching your application
 
 You need to create a main function that sets up the Dioxus runtime and mounts your root component.
 
@@ -28,7 +33,7 @@ fn main() {
 	dioxus::launch(App);
 }
 
-#[component]
+## [component]
 fn App() -> Element {
 	rsx! { "Hello, Dioxus!" }
 }
@@ -41,7 +46,7 @@ curl -sSL http://dioxus.dev/install.sh | sh
 dx serve
 ```
 
-# UI with RSX
+##  UI with RSX
 
 ```rust
 rsx! {
@@ -64,7 +69,7 @@ rsx! {
 }
 ```
 
-# Assets
+##  Assets
 
 The asset macro can be used to link to local files to use in your project. All links start with `/` and are relative to the root of your project.
 
@@ -77,7 +82,7 @@ rsx! {
 }
 ```
 
-## Styles
+###  Styles
 
 The `document::Stylesheet` component will inject the stylesheet into the `<head>` of the document
 
@@ -89,7 +94,7 @@ rsx! {
 }
 ```
 
-# Components
+##  Components
 
 Components are the building blocks of apps
 
@@ -100,7 +105,7 @@ Components are the building blocks of apps
 	2.  An internal reactive state it depends on is updated.
 
 ```rust
-#[component]
+## [component]
 fn Input(mut value: Signal<String>) -> Element {
 	rsx! {
 		input {
@@ -124,18 +129,18 @@ Each component accepts function arguments (props)
 * Props must implement `PartialEq` and `Clone`.
 * To make props reactive and copy, you can wrap the type in `ReadOnlySignal`. Any reactive state like memos and resources that read `ReadOnlySignal` props will automatically re-run when the prop changes.
 
-# State
+##  State
 
 A signal is a wrapper around a value that automatically tracks where it's read and written. Changing a signal's value causes code that relies on the signal to rerun.
 
-## Local State
+###  Local State
 
 The `use_signal` hook creates state that is local to a single component. You can call the signal like a function (e.g. `my_signal()`) to clone the value, or use `.read()` to get a reference. `.write()` gets a mutable reference to the value.
 
 Use `use_memo` to create a memoized value that recalculates when its dependencies change. Memos are useful for expensive calculations that you don't want to repeat unnecessarily.
 
 ```rust
-#[component]
+## [component]
 fn Counter() -> Element {
 	let mut count = use_signal(|| 0);
 	let mut doubled = use_memo(move || count() * 2); // doubled will re-run when count changes because it reads the signal
@@ -155,19 +160,19 @@ fn Counter() -> Element {
 }
 ```
 
-## Context API
+###  Context API
 
 The Context API allows you to share state down the component tree. A parent provides the state using `use_context_provider`, and any child can access it with `use_context`
 
 ```rust
-#[component]
+## [component]
 fn App() -> Element {
 	let mut theme = use_signal(|| "light".to_string());
 	use_context_provider(|| theme); // Provide a type to children
 	rsx! { Child {} }
 }
 
-#[component]
+## [component]
 fn Child() -> Element {
 	let theme = use_context::<Signal<String>>(); // Consume the same type
 	rsx! {
@@ -178,7 +183,7 @@ fn Child() -> Element {
 }
 ```
 
-# Async
+##  Async
 
 For state that depends on an asynchronous operation (like a network request), Dioxus provides a hook called `use_resource`. This hook manages the lifecycle of the async task and provides the result to your component.
 
@@ -198,7 +203,7 @@ match dog() {
 }
 ```
 
-# Routing
+##  Routing
 
 All possible routes are defined in a single Rust `enum` that derives `Routable`. Each variant represents a route and is annotated with `#[route("/path")]`. Dynamic Segments can capture parts of the URL path as parameters by using `:name` in the route string. These become fields in the enum variant.
 
@@ -207,7 +212,7 @@ The `Router<Route> {}` component is the entry point that manages rendering the c
 You can use the `#[layout(NavBar)]` to create a layout shared between pages and place an `Outlet<Route> {}` inside your layout component. The child routes will be rendered in the outlet.
 
 ```rust
-#[derive(Routable, Clone, PartialEq)]
+## [derive(Routable, Clone, PartialEq)]
 enum Route {
 	#[layout(NavBar)] // This will use NavBar as the layout for all routes
 		#[route("/")]
@@ -216,7 +221,7 @@ enum Route {
 		BlogPost { id: i32 },
 }
 
-#[component]
+## [component]
 fn NavBar() -> Element {
 	rsx! {
 		a { href: "/", "Home" }
@@ -224,7 +229,7 @@ fn NavBar() -> Element {
 	}
 }
 
-#[component]
+## [component]
 fn App() -> Element {
 	rsx! { Router::<Route> {} }
 }
@@ -234,7 +239,7 @@ fn App() -> Element {
 dioxus = { version = "0.7.1", features = ["router"] }
 ```
 
-# Fullstack
+##  Fullstack
 
 Fullstack enables server rendering and ipc calls. It uses Cargo features (`server` and a client feature like `web`) to split the code into a server and client binaries.
 
@@ -242,23 +247,23 @@ Fullstack enables server rendering and ipc calls. It uses Cargo features (`serve
 dioxus = { version = "0.7.1", features = ["fullstack"] }
 ```
 
-## Server Functions
+###  Server Functions
 
 Use the `#[post]` / `#[get]` macros to define an `async` function that will only run on the server. On the server, this macro generates an API endpoint. On the client, it generates a function that makes an HTTP request to that endpoint.
 
 ```rust
-#[post("/api/double/:path/&query")]
+## [post("/api/double/:path/&query")]
 async fn double_server(number: i32, path: String, query: i32) -> Result<i32, ServerFnError> {
 	tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 	Ok(number * 2)
 }
 ```
 
-## Hydration
+###  Hydration
 
 Hydration is the process of making a server-rendered HTML page interactive on the client. The server sends the initial HTML, and then the client-side runs, attaches event listeners, and takes control of future rendering.
 
-### Errors
+####  Errors
 The initial UI rendered by the component on the client must be identical to the UI rendered on the server.
 
 * Use the `use_server_future` hook instead of `use_resource`. It runs the future on the server, serializes the result, and sends it to the client, ensuring the client has the data immediately for its first render.
