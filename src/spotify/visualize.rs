@@ -503,15 +503,15 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
         .series(
             Pie::new()
                 .rose_type(PieRoseType::Radius)
-                .radius(vec!["50", "150"])
-                .center(vec!["15%", "50%"])
+                .radius(vec!["40", "150"])
+                .center(vec!["18%", "50%"])
                 .item_style(ItemStyle::new().border_radius(8))
                 .data(cumulative_genre_counts),
         )
         .series(
             Pie::new()
                 .rose_type(PieRoseType::Radius)
-                .radius(vec!["50", "150"])
+                .radius(vec!["40", "150"])
                 .center(vec!["50%", "50%"])
                 .item_style(ItemStyle::new().border_radius(8))
                 .data(genre_scores),
@@ -519,8 +519,8 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
         .series(
             Pie::new()
                 .rose_type(PieRoseType::Radius)
-                .radius(vec!["50", "150"])
-                .center(vec!["85%", "50%"])
+                .radius(vec!["40", "150"])
+                .center(vec!["82%", "50%"])
                 .item_style(ItemStyle::new().border_radius(8))
                 .data(average_genre_counts),
         )
