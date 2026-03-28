@@ -103,6 +103,10 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                     None => "Getting genres...".to_string(),
                 }
                 HoverSlider {
+                    current_rating: match &*rating.read() {
+                        Some(Some(Ok(rating))) => Some(*rating),
+                        _ => None,
+                    },
                     on_select: move |progress| {
                         println!("clicked at progress = {progress}");
                     },
@@ -113,11 +117,11 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
 }
 
 #[component]
-fn HoverSlider(on_select: EventHandler<f64>) -> Element {
+fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Element {
     let mut hovered = use_signal(|| false);
     let mut cursor_x = use_signal(|| 0.0_f64);
     let mut width = use_signal(|| 1.0_f64); // avoid divide-by-zero
-    let progress = use_memo(move || ((*cursor_x.read() / *width.read()).clamp(0.0, 1.0)) * 5.0);
+    let resting_progress = current_rating.unwrap_or(0.0).clamp(0.0, 5.0) as f64;
 
     rsx! {
         div {
@@ -172,26 +176,31 @@ fn HoverSlider(on_select: EventHandler<f64>) -> Element {
                     font-weight: 600;
                     pointer-events: none;
                 ",
-                "{progress():.2}"
+                if *hovered.read() {
+                    {format!("{:.2}", ((*cursor_x.read() / *width.read()).clamp(0.0, 1.0)) * 5.0)}
+                } else {
+                    {format!("{resting_progress:.2}")}
+                }
             }
 
-            // Hover line
-            if *hovered.read() {
-                div {
-                    style: format!(
-                        "
-                                        position: absolute;
-                                        top: 0;
-                                        bottom: 0;
-                                        left: {}px;
-                                        width: 2px;
-                                        background: white;
-                                        transform: translateX(-50%);
-                                        pointer-events: none;
-                                        ",
-                        *cursor_x.read(),
-                    ),
-                }
+            div {
+                style: format!(
+                    "
+                        position: absolute;
+                        top: 0;
+                        bottom: 0;
+                        left: {}px;
+                        width: 2px;
+                        background: white;
+                        transform: translateX(-50%);
+                        pointer-events: none;
+                    ",
+                    if *hovered.read() {
+                        *cursor_x.read()
+                    } else {
+                        (resting_progress / 5.0) * *width.read()
+                    },
+                ),
             }
         }
     }
