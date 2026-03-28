@@ -102,9 +102,99 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                     Some(_) => String::new(),
                     None => "Getting genres...".to_string(),
                 }
+                HoverSlider {
+                    on_select: move |progress| {
+                        println!("clicked at progress = {progress}");
+                    },
+                }
             }
         }
     )
+}
+
+#[component]
+fn HoverSlider(on_select: EventHandler<f64>) -> Element {
+    let mut hovered = use_signal(|| false);
+    let mut cursor_x = use_signal(|| 0.0_f64);
+    let mut width = use_signal(|| 1.0_f64); // avoid divide-by-zero
+    let progress = use_memo(move || ((*cursor_x.read() / *width.read()).clamp(0.0, 1.0)) * 5.0);
+
+    rsx! {
+        div {
+            style: "
+                position: relative;
+                width: 400px;
+                height: 48px;
+                margin: 0 auto;
+                background: #222;
+                border-radius: 8px;
+                overflow: hidden;
+                cursor: pointer;
+                user-select: none;
+            ",
+
+            onmounted: move |evt| {
+                spawn(async move {
+                    if let Ok(rect) = evt.data().get_client_rect().await {
+                        width.set(rect.size.width);
+                    }
+                });
+            },
+
+            onmouseenter: move |_| {
+                hovered.set(true);
+            },
+
+            onmouseleave: move |_| {
+                hovered.set(false);
+            },
+
+            onmousemove: move |evt| {
+                let x = evt.element_coordinates().x;
+                let x = x.clamp(0.0, *width.read());
+                cursor_x.set(x);
+            },
+
+            onclick: move |evt| {
+                let x = evt.element_coordinates().x.clamp(0.0, *width.read());
+                let progress = (x / *width.read()).clamp(0.0, 1.0);
+                on_select.call(progress);
+            },
+
+            div {
+                style: "
+                    position: absolute;
+                    inset: 0;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: white;
+                    font-weight: 600;
+                    pointer-events: none;
+                ",
+                "{progress():.2}"
+            }
+
+            // Hover line
+            if *hovered.read() {
+                div {
+                    style: format!(
+                        "
+                                        position: absolute;
+                                        top: 0;
+                                        bottom: 0;
+                                        left: {}px;
+                                        width: 2px;
+                                        background: white;
+                                        transform: translateX(-50%);
+                                        pointer-events: none;
+                                        ",
+                        *cursor_x.read(),
+                    ),
+                }
+            }
+        }
+    }
 }
 
 #[server]
