@@ -101,13 +101,6 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                 if let Some(track) = track {
                     h3 { "{track.name}" }
                 }
-                match (current_rating, &*rating.read()) {
-                    (Some(rating), _) => format!("Rating: {rating}"),
-                    (None, Some(Some(Err(e)))) => format!("Error getting rating: {e}"),
-                    (None, Some(None)) => String::new(),
-                    (None, _) => "Getting rating...".to_string(),
-                }
-                br {}
                 match &*genres.read() {
                     Some(Some(genres)) if !genres.is_empty() => {
                         format!(
@@ -118,6 +111,8 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                     Some(_) => String::new(),
                     None => "Getting genres...".to_string(),
                 }
+                br {}
+                br {}
                 HoverSlider {
                     current_rating,
                     on_select: move |selected_rating| async move {
