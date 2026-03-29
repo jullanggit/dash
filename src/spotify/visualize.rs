@@ -12,7 +12,7 @@ use charming::{
     },
     series::{Line, Pie, PieRoseType},
 };
-use rspotify_model::TrackId;
+use rspotify_model::FullTrack;
 use std::{
     array,
     collections::HashMap,
@@ -162,13 +162,16 @@ pub fn num_ratings_history(data: &Analyzation) -> Chart {
         )
 }
 
-pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
+fn canonical_rating_history_chart<'a>(
+    tracks: impl IntoIterator<Item = (&'a FullTrack, &'a TrackAnalyzation)>,
+    title: &'static str,
+) -> Chart {
     use charming::element::{Formatter, JsFunction, Tooltip, Trigger};
 
     let now = UtcDateTime::now();
     let mut hasher = DefaultHasher::new();
-    data.tracks
-        .iter()
+    tracks
+        .into_iter()
         .map(|(song, analyzed)| {
             (
                 song,
@@ -183,7 +186,7 @@ pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
         })
         .fold(
             base_chart()
-                .title(Title::new().text("Canonical Rating Histories"))
+                .title(Title::new().text(title))
                 .x_axis(Axis::new().type_(AxisType::Time))
                 .y_axis(Axis::new().type_(AxisType::Value).min(0.0).max(5.0))
                 .tooltip(
@@ -215,6 +218,19 @@ pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
                 )
             },
         )
+}
+
+pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
+    canonical_rating_history_chart(
+        data.tracks
+            .iter()
+            .map(|(track, analyzed)| (track, analyzed)),
+        "Canonical Rating Histories",
+    )
+}
+
+pub fn track_canonical_rating_history(track: &FullTrack, analyzed: &TrackAnalyzation) -> Chart {
+    canonical_rating_history_chart([(track, analyzed)], "Canonical Rating History")
 }
 
 pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {

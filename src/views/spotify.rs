@@ -44,6 +44,15 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
         }
     });
     let mut pending_rating = use_signal(|| None::<(TrackId<'static>, f32)>);
+    let mut canonical_history_chart = use_resource(move || {
+        let id = track_id.read().clone().map(TrackId::into_static);
+        async move {
+            match id {
+                Some(id) => Some(canonical_rating_history_chart(id).await),
+                None => None,
+            }
+        }
+    });
 
     let genres = use_resource(move || async move {
         // let to avoid holding the 'read' across await points
@@ -91,45 +100,88 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
     };
     let current_rating = pending_rating_value.or(fetched_rating);
     rsx!(
-        if let Some(image) = image {
-            img {
-                src: "{image.url}",
-                width: image.width,
-                height: image.height,
-            }
-            div {
-                if let Some(track) = track {
-                    h3 { "{track.name}" }
-                }
-                match &*genres.read() {
-                    Some(Some(genres)) if !genres.is_empty() => {
-                        format!(
-                            "Genres: {}",
-                            genres.iter().cloned().intersperse(", ".into()).collect::<String>(),
-                        )
-                    }
-                    Some(_) => String::new(),
-                    None => "Getting genres...".to_string(),
-                }
-                br {}
-                br {}
-                HoverSlider {
-                    current_rating,
-                    on_select: move |selected_rating| async move {
-                        let Some(track_id) = track_id.read().clone() else {
-                            return;
-                        };
-                        match add_rating(track_id.clone(), selected_rating as f32).await {
-                            Ok(canonical_rating) => {
-                                pending_rating.set(Some((track_id, canonical_rating)));
-                                rating.restart();
-                            }
-                            Err(error) => {
-                                pending_rating.set(None);
-                                error!("Failed to submit rating: {error}");
-                            }
+        if image.is_some() || track.is_some() {
+            div { style: "
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 24px;
+                    align-items: flex-start;
+                    justify-content: center;
+                ",
+                div { style: "
+                        display: flex;
+                        flex-direction: column;
+                        gap: 16px;
+                        align-items: center;
+                        flex: 1 1 320px;
+                        max-width: 420px;
+                    ",
+                    if let Some(image) = image {
+                        img {
+                            src: "{image.url}",
+                            width: image.width,
+                            height: image.height,
+                            style: "max-width: 100%; height: auto;",
                         }
-                    },
+                    }
+                    div {
+                        if let Some(track) = track {
+                            h3 { "{track.name}" }
+                        }
+                        match &*genres.read() {
+                            Some(Some(genres)) if !genres.is_empty() => {
+                                format!(
+                                    "Genres: {}",
+                                    genres.iter().cloned().intersperse(", ".into()).collect::<String>(),
+                                )
+                            }
+                            Some(_) => String::new(),
+                            None => "Getting genres...".to_string(),
+                        }
+                        br {}
+                        br {}
+                        HoverSlider {
+                            current_rating,
+                            on_select: move |selected_rating| async move {
+                                let Some(track_id) = track_id.read().clone() else {
+                                    return;
+                                };
+                                match add_rating(track_id.clone(), selected_rating as f32).await {
+                                    Ok(canonical_rating) => {
+                                        pending_rating.set(Some((track_id, canonical_rating)));
+                                        rating.restart();
+                                        canonical_history_chart.restart();
+                                    }
+                                    Err(error) => {
+                                        pending_rating.set(None);
+                                        error!("Failed to submit rating: {error}");
+                                    }
+                                }
+                            },
+                        }
+                    }
+                }
+                div { style: "flex: 1 1 640px; max-width: 960px; width: min(100%, 960px);",
+                    match &*canonical_history_chart.read() {
+                        Some(Some(Ok(chart))) => rsx! {
+                            iframe {
+                                title: "Canonical rating history",
+                                srcdoc: "{chart}",
+                                width: "100%",
+                                height: "540",
+                                style: "border: 0; background: transparent;",
+                            }
+                        },
+                        Some(Some(Err(error))) => rsx! {
+                            p { "Failed to load canonical rating history: {error}" }
+                        },
+                        Some(None) => rsx! {
+                            p { "No track playing." }
+                        },
+                        None => rsx! {
+                            p { "Loading canonical rating history..." }
+                        },
+                    }
                 }
             }
         }
@@ -235,15 +287,15 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
             div {
                 style: format!(
                     "
-                                                                                                                                                                                                                                    position: absolute;
-                                                                                                                                                                                                                                    top: 0;
-                                                                                                                                                                                                                                    bottom: 0;
-                                                                                                                                                                                                                                    left: {}px;
-                                                                                                                                                                                                                                    width: 2px;
-                                                                                                                                                                                                                                    background: white;
-                                                                                                                                                                                                                                    transform: translateX(-50%);
-                                                                                                                                                                                                                                    pointer-events: none;
-                                                                                                                                                                                                                                ",
+                                                                                                                                                                                                                                                            position: absolute;
+                                                                                                                                                                                                                                                            top: 0;
+                                                                                                                                                                                                                                                            bottom: 0;
+                                                                                                                                                                                                                                                            left: {}px;
+                                                                                                                                                                                                                                                            width: 2px;
+                                                                                                                                                                                                                                                            background: white;
+                                                                                                                                                                                                                                                            transform: translateX(-50%);
+                                                                                                                                                                                                                                                            pointer-events: none;
+                                                                                                                                                                                                                                                        ",
                     (displayed_rating / 5.0) * *width.read(),
                 ),
             }
@@ -282,4 +334,24 @@ async fn charts() -> Result<Vec<String>> {
             .expect("Rendering chart shouldn't fail")
     })
     .collect())
+}
+
+#[server]
+async fn canonical_rating_history_chart(track_id: TrackId<'static>) -> Result<String> {
+    use crate::spotify::{ratings_server, track_canonical_rating_history};
+    use anyhow::anyhow;
+    use charming::HtmlRenderer;
+
+    let analyzation = ratings_server().await;
+    let Some((track, analyzed)) = analyzation
+        .tracks
+        .iter()
+        .find(|(track, _)| track.id.as_ref() == Some(&track_id))
+    else {
+        return Err(anyhow!("Track not found in ratings analyzation").into());
+    };
+
+    HtmlRenderer::new("Renderer", 1280, 720)
+        .render(&track_canonical_rating_history(track, analyzed))
+        .map_err(Into::into)
 }
