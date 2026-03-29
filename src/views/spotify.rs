@@ -138,16 +138,18 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
 
 #[component]
 fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Element {
-    let mut hovered = use_signal(|| false);
-    let mut cursor_x = use_signal(|| 0.0_f64);
+    let mut hovering = use_signal(|| false);
+    let mut interacting = use_signal(|| false);
+    let mut preview_rating = use_signal(|| None::<f64>);
     let mut width = use_signal(|| 1.0_f64); // avoid divide-by-zero
     let resting_progress = current_rating.unwrap_or(0.0).clamp(0.0, 5.0) as f64;
+    let displayed_rating = preview_rating.read().unwrap_or(resting_progress);
 
     rsx! {
         div {
             style: "
                 position: relative;
-                width: 400px;
+                width: min(400px, 100%);
                 height: 48px;
                 margin: 0 auto;
                 background: #222;
@@ -155,6 +157,7 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
                 overflow: hidden;
                 cursor: pointer;
                 user-select: none;
+                touch-action: none;
             ",
 
             onmounted: move |evt| {
@@ -165,24 +168,55 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
                 });
             },
 
-            onmouseenter: move |_| {
-                hovered.set(true);
+            onpointerenter: move |evt| {
+                let width = *width.read();
+                let x = evt.element_coordinates().x.clamp(0.0, width);
+                let rating = ((x / width).clamp(0.0, 1.0)) * 5.0;
+                hovering.set(true);
+                preview_rating.set(Some(rating));
             },
 
-            onmouseleave: move |_| {
-                hovered.set(false);
+            onpointerdown: move |evt| {
+                let width = *width.read();
+                let x = evt.element_coordinates().x.clamp(0.0, width);
+                let rating = ((x / width).clamp(0.0, 1.0)) * 5.0;
+                interacting.set(true);
+                preview_rating.set(Some(rating));
             },
 
-            onmousemove: move |evt| {
-                let x = evt.element_coordinates().x;
-                let x = x.clamp(0.0, *width.read());
-                cursor_x.set(x);
+            onpointermove: move |evt| {
+                if !*hovering.read() && !*interacting.read() {
+                    return;
+                }
+                let width = *width.read();
+                let x = evt.element_coordinates().x.clamp(0.0, width);
+                let rating = ((x / width).clamp(0.0, 1.0)) * 5.0;
+                preview_rating.set(Some(rating));
             },
 
-            onclick: move |evt| {
-                let x = evt.element_coordinates().x.clamp(0.0, *width.read());
-                let rating = ((x / *width.read()).clamp(0.0, 1.0)) * 5.0;
+            onpointerup: move |evt| {
+                let width = *width.read();
+                let x = evt.element_coordinates().x.clamp(0.0, width);
+                let rating = ((x / width).clamp(0.0, 1.0)) * 5.0;
+                interacting.set(false);
+                preview_rating.set(if *hovering.read() { Some(rating) } else { None });
                 on_select.call(rating);
+            },
+
+            onpointerleave: move |_| {
+                hovering.set(false);
+                if !*interacting.read() {
+                    preview_rating.set(None);
+                }
+            },
+
+            onpointercancel: move |_| {
+                if let Some(rating) = *preview_rating.read() {
+                    on_select.call(rating);
+                }
+                hovering.set(false);
+                interacting.set(false);
+                preview_rating.set(None);
             },
 
             div { style: "
@@ -195,30 +229,22 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
                     font-weight: 600;
                     pointer-events: none;
                 ",
-                if *hovered.read() {
-                    {format!("{:.2}", ((*cursor_x.read() / *width.read()).clamp(0.0, 1.0)) * 5.0)}
-                } else {
-                    {format!("{resting_progress:.2}")}
-                }
+                {format!("{displayed_rating:.2}")}
             }
 
             div {
                 style: format!(
                     "
-                                                                                                                                                            position: absolute;
-                                                                                                                                                            top: 0;
-                                                                                                                                                            bottom: 0;
-                                                                                                                                                            left: {}px;
-                                                                                                                                                            width: 2px;
-                                                                                                                                                            background: white;
-                                                                                                                                                            transform: translateX(-50%);
-                                                                                                                                                            pointer-events: none;
-                                                                                                                                                        ",
-                    if *hovered.read() {
-                        *cursor_x.read()
-                    } else {
-                        (resting_progress / 5.0) * *width.read()
-                    },
+                                                                                                                                                                                                position: absolute;
+                                                                                                                                                                                                top: 0;
+                                                                                                                                                                                                bottom: 0;
+                                                                                                                                                                                                left: {}px;
+                                                                                                                                                                                                width: 2px;
+                                                                                                                                                                                                background: white;
+                                                                                                                                                                                                transform: translateX(-50%);
+                                                                                                                                                                                                pointer-events: none;
+                                                                                                                                                                                            ",
+                    (displayed_rating / 5.0) * *width.read(),
                 ),
             }
         }
