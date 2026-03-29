@@ -12,6 +12,7 @@ use charming::{
     },
     series::{Line, Pie, PieRoseType},
 };
+use rspotify_model::TrackId;
 use std::{
     array,
     collections::HashMap,
@@ -496,13 +497,14 @@ fn sort_and_limit(mut values: Vec<(f32, String)>) -> Vec<(f32, String)> {
     values
 }
 
-fn proportion_pie(center: &str, data: Vec<(f32, String)>) -> Pie {
+fn proportion_pie(center: &str, data: Vec<(f32, String)>, name: &str) -> Pie {
     Pie::new()
         .rose_type(PieRoseType::Radius)
         .radius(vec!["40", "150"])
         .center(vec![center, "50%"])
         .item_style(ItemStyle::new().border_radius(8))
         .data(data)
+        .name(name)
 }
 
 pub fn genre_proportions(data: &Analyzation) -> Chart {
@@ -555,18 +557,23 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
     let genre_scores = sort_and_limit(genre_scores);
 
     base_chart()
-        .title(Title::new().text("Genre Cumulative Rating"))
+        .title(Title::new().text("Genres"))
         .tooltip(Tooltip::new().trigger(Trigger::Item))
-        .series(proportion_pie("18%", cumulative_genre_counts))
-        .series(proportion_pie("50%", genre_scores))
-        .series(proportion_pie("82%", average_genre_counts))
+        .series(proportion_pie("18%", cumulative_genre_counts, "Cumulative"))
+        .series(proportion_pie("50%", genre_scores, "Score"))
+        .series(proportion_pie("82%", average_genre_counts, "Average"))
 }
 
 pub fn artist_proportions(data: &Analyzation) -> Chart {
     let mut artist_counts: HashMap<String, f32> = HashMap::new();
+    let mut song_ratings: HashMap<_, f32> = HashMap::new();
 
     for (track, analyzation) in &data.tracks {
         let track_weight = weight(analyzation.canonical_rating);
+        song_ratings.insert(
+            (track.name.clone(), track.id.clone()),
+            weight(analyzation.canonical_rating),
+        );
 
         for artist in &track.artists {
             *artist_counts.entry(artist.name.clone()).or_insert(0.0) += track_weight;
@@ -579,11 +586,18 @@ pub fn artist_proportions(data: &Analyzation) -> Chart {
             .map(|(artist, acc)| (acc, artist))
             .collect(),
     );
+    let song_ratings = sort_and_limit(
+        song_ratings
+            .into_iter()
+            .map(|((name, id), rating)| (rating, name))
+            .collect(),
+    );
 
     base_chart()
-        .title(Title::new().text("Artist Cumulative Rating"))
+        .title(Title::new().text("Song Rating and Artist Cumulative Rating"))
         .tooltip(Tooltip::new().trigger(Trigger::Item))
-        .series(proportion_pie("50%", cumulative_artist_counts))
+        .series(proportion_pie("25%", song_ratings, "Songs"))
+        .series(proportion_pie("75%", cumulative_artist_counts, "Artists"))
 }
 
 fn release_date_to_timestamp_millis(

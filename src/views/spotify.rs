@@ -235,15 +235,15 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
             div {
                 style: format!(
                     "
-                                                                                                                                                                                                position: absolute;
-                                                                                                                                                                                                top: 0;
-                                                                                                                                                                                                bottom: 0;
-                                                                                                                                                                                                left: {}px;
-                                                                                                                                                                                                width: 2px;
-                                                                                                                                                                                                background: white;
-                                                                                                                                                                                                transform: translateX(-50%);
-                                                                                                                                                                                                pointer-events: none;
-                                                                                                                                                                                            ",
+                                                                                                                                                                                                                                    position: absolute;
+                                                                                                                                                                                                                                    top: 0;
+                                                                                                                                                                                                                                    bottom: 0;
+                                                                                                                                                                                                                                    left: {}px;
+                                                                                                                                                                                                                                    width: 2px;
+                                                                                                                                                                                                                                    background: white;
+                                                                                                                                                                                                                                    transform: translateX(-50%);
+                                                                                                                                                                                                                                    pointer-events: none;
+                                                                                                                                                                                                                                ",
                     (displayed_rating / 5.0) * *width.read(),
                 ),
             }
