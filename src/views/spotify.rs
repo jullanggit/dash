@@ -109,9 +109,9 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
         if image.is_some() || track.is_some() {
             div { style: "
                     display: flex;
-                    flex-wrap: wrap;
+                    flex-direction: column;
                     gap: 24px;
-                    align-items: flex-start;
+                    align-items: center;
                     justify-content: center;
                 ",
                 div { style: "
@@ -119,8 +119,8 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                         flex-direction: column;
                         gap: 16px;
                         align-items: center;
-                        flex: 0 1 420px;
-                        width: min(100%, 420px);
+                        flex: 0 1 960px;
+                        width: min(100%, 960px);
                     ",
                     if let Some(image) = image {
                         img {
@@ -167,7 +167,7 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                         }
                     }
                 }
-                div { style: "flex: 1 1 640px; max-width: 960px; width: min(100%, 960px);",
+                div { style: "width: min(100%, 960px);",
                     match &*canonical_history_chart.read() {
                         Some(Some(Ok(chart))) => rsx! {
                             iframe {
@@ -294,15 +294,15 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
             div {
                 style: format!(
                     "
-                                                                                                                                                                                                                                                                                                                                                                                                position: absolute;
-                                                                                                                                                                                                                                                                                                                                                                                                top: 0;
-                                                                                                                                                                                                                                                                                                                                                                                                bottom: 0;
-                                                                                                                                                                                                                                                                                                                                                                                                left: {}px;
-                                                                                                                                                                                                                                                                                                                                                                                                width: 2px;
-                                                                                                                                                                                                                                                                                                                                                                                                background: white;
-                                                                                                                                                                                                                                                                                                                                                                                                transform: translateX(-50%);
-                                                                                                                                                                                                                                                                                                                                                                                                pointer-events: none;
-                                                                                                                                                                                                                                                                                                                                                                                            ",
+                                                                                                                                                                                                                                                                                                                                                                                                                        position: absolute;
+                                                                                                                                                                                                                                                                                                                                                                                                                        top: 0;
+                                                                                                                                                                                                                                                                                                                                                                                                                        bottom: 0;
+                                                                                                                                                                                                                                                                                                                                                                                                                        left: {}px;
+                                                                                                                                                                                                                                                                                                                                                                                                                        width: 2px;
+                                                                                                                                                                                                                                                                                                                                                                                                                        background: white;
+                                                                                                                                                                                                                                                                                                                                                                                                                        transform: translateX(-50%);
+                                                                                                                                                                                                                                                                                                                                                                                                                        pointer-events: none;
+                                                                                                                                                                                                                                                                                                                                                                                                                    ",
                     (displayed_rating / 5.0) * *width.read(),
                 ),
             }
