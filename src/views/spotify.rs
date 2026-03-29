@@ -325,13 +325,13 @@ async fn charts() -> Result<Vec<String>> {
     let analyzation = ratings_server().await;
 
     Ok([
+        genre_proportions,
+        artist_proportions,
         canonical_rating_distribution,
-        average_rating_per_day,
         num_ratings_history,
         song_canonical_rating_histories,
         canonical_rating_correlations,
-        genre_proportions,
-        artist_proportions,
+        average_rating_per_day,
     ]
     .into_iter()
     .map(|f| f(&analyzation))
