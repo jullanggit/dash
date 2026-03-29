@@ -16,7 +16,13 @@ pub fn Spotify() -> Element {
             Some(charts) => {
                 rsx! {
                     for chart in charts {
-                        iframe { width: 1920, height: 1080, srcdoc: "{chart}" }
+                        iframe {
+                            width: 1920,
+                            height: 1080,
+                            srcdoc: "{chart}",
+                            scrolling: "no",
+                            style: "border: 0; overflow: hidden;",
+                        }
                     }
                 }
             }
@@ -113,8 +119,8 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                         flex-direction: column;
                         gap: 16px;
                         align-items: center;
-                        flex: 1 1 320px;
-                        max-width: 420px;
+                        flex: 0 1 420px;
+                        width: min(100%, 420px);
                     ",
                     if let Some(image) = image {
                         img {
@@ -124,7 +130,7 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                             style: "max-width: 100%; height: auto;",
                         }
                     }
-                    div {
+                    div { style: "width: 100%;",
                         if let Some(track) = track {
                             h3 { "{track.name}" }
                         }
@@ -168,8 +174,9 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                                 title: "Canonical rating history",
                                 srcdoc: "{chart}",
                                 width: "100%",
-                                height: "540",
-                                style: "border: 0; background: transparent;",
+                                height: "600",
+                                scrolling: "no",
+                                style: "border: 0; background: transparent; overflow: hidden;",
                             }
                         },
                         Some(Some(Err(error))) => rsx! {
@@ -287,15 +294,15 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
             div {
                 style: format!(
                     "
-                                                                                                                                                                                                                                                            position: absolute;
-                                                                                                                                                                                                                                                            top: 0;
-                                                                                                                                                                                                                                                            bottom: 0;
-                                                                                                                                                                                                                                                            left: {}px;
-                                                                                                                                                                                                                                                            width: 2px;
-                                                                                                                                                                                                                                                            background: white;
-                                                                                                                                                                                                                                                            transform: translateX(-50%);
-                                                                                                                                                                                                                                                            pointer-events: none;
-                                                                                                                                                                                                                                                        ",
+                                                                                                                                                                                                                                                                                                                                                            position: absolute;
+                                                                                                                                                                                                                                                                                                                                                            top: 0;
+                                                                                                                                                                                                                                                                                                                                                            bottom: 0;
+                                                                                                                                                                                                                                                                                                                                                            left: {}px;
+                                                                                                                                                                                                                                                                                                                                                            width: 2px;
+                                                                                                                                                                                                                                                                                                                                                            background: white;
+                                                                                                                                                                                                                                                                                                                                                            transform: translateX(-50%);
+                                                                                                                                                                                                                                                                                                                                                            pointer-events: none;
+                                                                                                                                                                                                                                                                                                                                                        ",
                     (displayed_rating / 5.0) * *width.read(),
                 ),
             }
@@ -329,9 +336,11 @@ async fn charts() -> Result<Vec<String>> {
     .into_iter()
     .map(|f| f(&analyzation))
     .map(|chart| {
-        renderer
-            .render(&chart)
-            .expect("Rendering chart shouldn't fail")
+        sanitize_chart_html(
+            renderer
+                .render(&chart)
+                .expect("Rendering chart shouldn't fail"),
+        )
     })
     .collect())
 }
@@ -351,7 +360,13 @@ async fn canonical_rating_history_chart(track_id: TrackId<'static>) -> Result<St
         return Err(anyhow!("Track not found in ratings analyzation").into());
     };
 
-    HtmlRenderer::new("Renderer", 1280, 720)
+    HtmlRenderer::new("Renderer", 960, 600)
         .render(&track_canonical_rating_history(track, analyzed))
+        .map(sanitize_chart_html)
         .map_err(Into::into)
+}
+
+#[cfg(feature = "server")]
+fn sanitize_chart_html(html: String) -> String {
+    html.replace("<body>", "<body style=\"margin: 0; overflow: hidden;\">")
 }

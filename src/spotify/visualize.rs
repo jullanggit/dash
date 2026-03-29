@@ -684,7 +684,9 @@ pub fn base_chart() -> Chart {
     use charming::component::{Feature, Toolbox, ToolboxDataZoom};
 
     // TODO: see if I can make this preserve lines between off-screen and on-screen datapoints when zooming
-    Chart::new().toolbox(Toolbox::new().feature(Feature::new().data_zoom(ToolboxDataZoom::new())))
+    Chart::new()
+        .animation(false)
+        .toolbox(Toolbox::new().feature(Feature::new().data_zoom(ToolboxDataZoom::new())))
 }
 
 #[cfg(test)]
