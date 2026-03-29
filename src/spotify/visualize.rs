@@ -83,8 +83,7 @@ pub fn canonical_rating_distribution(data: &Analyzation) -> Chart {
     .collect::<Vec<_>>();
 
     // chart
-    base_chart()
-        .title(Title::new().text("Canonical Rating Distribution"))
+    base_chart("Canonical Rating Distribution")
         .x_axis(
             Axis::new()
                 .type_(AxisType::Value)
@@ -108,8 +107,7 @@ pub fn canonical_rating_distribution(data: &Analyzation) -> Chart {
 }
 
 pub fn average_rating_per_day(data: &Analyzation) -> Chart {
-    base_chart()
-        .title(Title::new().text("Average Rating per Day"))
+    base_chart("Average Rating per Day")
         .x_axis(Axis::new().type_(AxisType::Time))
         .y_axis(Axis::new().type_(AxisType::Value))
         .series(
@@ -131,8 +129,7 @@ pub fn average_rating_per_day(data: &Analyzation) -> Chart {
 // TODO: make sure lines go to the end with new analyzations
 pub fn num_ratings_history(data: &Analyzation) -> Chart {
     let convert = |&(date_time, count)| (date_time, count as i64);
-    base_chart()
-        .title(Title::new().text("Num Ratings"))
+    base_chart("Num Ratings")
         .x_axis(Axis::new().type_(AxisType::Time))
         .y_axis(Axis::new().type_(AxisType::Value))
         // TODO: maybe ensure that all points have a value from both series
@@ -185,8 +182,7 @@ fn canonical_rating_history_chart<'a>(
             )
         })
         .fold(
-            base_chart()
-                .title(Title::new().text(title))
+            base_chart(title)
                 .x_axis(Axis::new().type_(AxisType::Time))
                 .y_axis(Axis::new().type_(AxisType::Value).min(0.0).max(5.0))
                 .tooltip(
@@ -394,8 +390,7 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         })
         .collect::<Vec<_>>();
 
-    let mut chart = base_chart()
-        .title(Title::new().text("Canonical Rating Correlations"))
+    let mut chart = base_chart("Canonical Rating Correlations")
         .tooltip(Tooltip::new().trigger(Trigger::Item))
         .x_axis(
             Axis::new()
@@ -572,8 +567,7 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
     let average_genre_counts = sort_and_limit(average_genre_counts);
     let genre_scores = sort_and_limit(genre_scores);
 
-    base_chart()
-        .title(Title::new().text("Genres"))
+    base_chart("Genres")
         .tooltip(Tooltip::new().trigger(Trigger::Item))
         .series(proportion_pie("18%", cumulative_genre_counts, "Cumulative"))
         .series(proportion_pie("50%", genre_scores, "Score"))
@@ -609,8 +603,7 @@ pub fn artist_proportions(data: &Analyzation) -> Chart {
             .collect(),
     );
 
-    base_chart()
-        .title(Title::new().text("Song Rating and Artist Cumulative Rating"))
+    base_chart("Song Rating and Artist Cumulative Rating")
         .tooltip(Tooltip::new().trigger(Trigger::Item))
         .series(proportion_pie("25%", song_ratings, "Songs"))
         .series(proportion_pie("75%", cumulative_artist_counts, "Artists"))
@@ -680,12 +673,13 @@ fn to_composite_values(
     ]
 }
 
-pub fn base_chart() -> Chart {
+pub fn base_chart(title: &'static str) -> Chart {
     use charming::component::{Feature, Toolbox, ToolboxDataZoom};
 
     // TODO: see if I can make this preserve lines between off-screen and on-screen datapoints when zooming
     Chart::new()
         .animation(false)
+        .title(Title::new().text(title).left("center"))
         .toolbox(Toolbox::new().feature(Feature::new().data_zoom(ToolboxDataZoom::new())))
 }
 
