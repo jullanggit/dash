@@ -124,7 +124,7 @@ caching!(
         Ok(playlists)
     },
     RATING_PLAYLISTS,
-    Duration::minutes(5)
+    Duration::seconds(10)
 );
 
 /// Paginates the given function, retrying any too-many-request errors.
@@ -208,10 +208,13 @@ caching!(
     // get ratings. Only re-fetch ratings within the last 15 minutes.
     |_, previous| async move {
         use crate::spotify::analyze::analyze;
+        use std::collections::HashMap;
 
         let spotify = spotify().await.clone();
         let playlists = rating_playlists_server().await;
-        let mut ratings = previous.unwrap_or_default().tracks;
+        let mut previous = previous.unwrap_or_default();
+        let previous_snapshot_ids = std::mem::take(&mut previous.playlist_snapshot_ids);
+        let mut ratings = previous.tracks;
 
         // remove any ratings younger than 15 minutes
         let now = UtcDateTime::now();
@@ -224,7 +227,19 @@ caching!(
 
         trace!("Getting ratings");
 
+        let current_snapshot_ids = playlists
+            .iter()
+            .map(|(_, playlist)| (playlist.id.clone(), playlist.snapshot_id.clone()))
+            .collect::<HashMap<_, _>>();
+
         for (rating, playlist) in playlists {
+            if previous_snapshot_ids
+                .get(&playlist.id)
+                .is_some_and(|previous| *previous == playlist.snapshot_id)
+            {
+                continue;
+            }
+
             let spotify_clone = spotify.clone();
             let mut items = paginate_retrying(move |offset| {
                 let spotify = spotify_clone.clone();
@@ -277,7 +292,9 @@ caching!(
             }
         }
 
-        Ok(analyze(ratings).await)
+        let mut analyzation = analyze(ratings).await;
+        analyzation.playlist_snapshot_ids = current_snapshot_ids;
+        Ok(analyzation)
     },
     RATINGS,
     Duration::seconds(10)

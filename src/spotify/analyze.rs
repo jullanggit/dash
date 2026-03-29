@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
-use rspotify_model::{FullTrack, TrackId};
+use rspotify_model::{FullTrack, PlaylistId, TrackId};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use time::{Date, Duration, UtcDateTime};
 
 // TODO: make this configurable
@@ -25,6 +25,8 @@ pub struct Analyzation {
     pub average_rating_per_day: Vec<(Date, f32)>,
     pub num_ratings_history: Vec<(UtcDateTime, u32)>,
     pub num_rated_tracks_history: Vec<(UtcDateTime, u32)>,
+    #[serde(default)]
+    pub playlist_snapshot_ids: HashMap<PlaylistId<'static>, String>,
 }
 impl Analyzation {
     pub fn rating(&self, track_id: TrackId<'_>) -> f32 {
@@ -162,6 +164,7 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
         average_rating_per_day,
         num_ratings_history,
         num_rated_tracks_history,
+        playlist_snapshot_ids: HashMap::new(),
     }
 }
 
