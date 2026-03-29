@@ -119,8 +119,8 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                         flex-direction: column;
                         gap: 16px;
                         align-items: center;
-                        flex: 0 1 960px;
-                        width: min(100%, 960px);
+                        flex: 0 1 640px;
+                        width: min(100%, 640px);
                     ",
                     if let Some(image) = image {
                         img {
