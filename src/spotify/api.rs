@@ -88,44 +88,39 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
     }
 }
 
-caching!(
-    rating_playlists,
-    Vec<(f32, SimplifiedPlaylist)>,
-    |_, _| async move {
-        let spotify = spotify().await;
-        let mut playlists = Vec::new();
+/// Fetches rating playlists. Never caches.
+async fn rating_playlists() -> anyhow::Result<Vec<(f32, SimplifiedPlaylist)>> {
+    let spotify = spotify().await;
+    let mut playlists = Vec::new();
 
-        trace!("Getting rating playlists");
+    trace!("Getting rating playlists");
 
-        let mut response = paginate_retrying(move |offset| {
-            let spotify = spotify.clone();
-            async move {
-                trace!("[SPOTIFY API LOG] current user playlists, offset {offset}");
-                spotify
-                    .current_user_playlists_manual(None, Some(offset))
-                    .await
-            }
-        })
-        .await;
-
-        while let Some(result) = response.next().await {
-            let playlist = result.context("Error getting playlist")?;
-            if let Ok(rating) = playlist.name.parse::<f32>()
-                && (0.0..=5.0).contains(&rating)
-            {
-                if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
-                    panic!("Rating folder already present")
-                } else {
-                    playlists.push((rating, playlist.clone()))
-                };
-            }
+    let mut response = paginate_retrying(move |offset| {
+        let spotify = spotify.clone();
+        async move {
+            trace!("[SPOTIFY API LOG] current user playlists, offset {offset}");
+            spotify
+                .current_user_playlists_manual(None, Some(offset))
+                .await
         }
+    })
+    .await;
 
-        Ok(playlists)
-    },
-    RATING_PLAYLISTS,
-    Duration::seconds(10)
-);
+    while let Some(result) = response.next().await {
+        let playlist = result.context("Error getting playlist")?;
+        if let Ok(rating) = playlist.name.parse::<f32>()
+            && (0.0..=5.0).contains(&rating)
+        {
+            if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
+                panic!("Rating folder already present")
+            } else {
+                playlists.push((rating, playlist.clone()))
+            };
+        }
+    }
+
+    Ok(playlists)
+}
 
 /// Paginates the given function, retrying any too-many-request errors.
 /// Returns early if any other errors are encountered.
@@ -211,8 +206,9 @@ caching!(
         use std::collections::HashMap;
 
         let spotify = spotify().await.clone();
-        let playlists = rating_playlists_server().await;
+        let playlists = rating_playlists()?.await;
         let mut previous = previous.unwrap_or_default();
+
         let previous_snapshot_ids = std::mem::take(&mut previous.playlist_snapshot_ids);
         let mut ratings = previous.tracks;
 
