@@ -115,7 +115,7 @@ caching!(
                 && (0.0..=5.0).contains(&rating)
             {
                 if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
-                    panic!("Rating folder already present")
+                    return Err(anyhow::anyhow!("Rating folder {rating} already present"));
                 } else {
                     playlists.push((rating, playlist.clone()))
                 };

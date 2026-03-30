@@ -227,8 +227,6 @@ fn canonical_rating_history_chart<'a>(
                 chart.series(
                     Line::new()
                         .name("Added rating")
-                        .symbol(charming::element::Symbol::Circle)
-                        .symbol_size(8)
                         .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
                             Formatter::Function(JsFunction::new_with_args(
                                 "params",
