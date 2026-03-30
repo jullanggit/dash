@@ -216,15 +216,6 @@ caching!(
         let previous_snapshot_ids = std::mem::take(&mut previous.playlist_snapshot_ids);
         let mut ratings = previous.tracks;
 
-        // remove any ratings younger than 15 minutes
-        let now = UtcDateTime::now();
-        ratings.retain_mut(|(_, analyzation)| {
-            analyzation
-                .rating_history
-                .retain(|(date_time, _)| now - Duration::minutes(15) > *date_time);
-            !analyzation.rating_history.is_empty()
-        });
-
         trace!("Getting ratings");
 
         let current_snapshot_ids = playlists
