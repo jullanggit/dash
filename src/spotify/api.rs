@@ -20,9 +20,9 @@ use rspotify::{
 #[cfg(feature = "server")]
 use rspotify_model::Page;
 use rspotify_model::{
-    ArtistId, CurrentPlaybackContext, FullArtist, FullTrack, PlayableId, PlayableItem, PlaylistId,
-    PlaylistItem, PlaylistTracksRef, PrivateUser, SavedTrack, SimplifiedArtist, SimplifiedPlaylist,
-    TrackId,
+    ArtistId, CurrentPlaybackContext, FullArtist, FullTrack, PlayHistory, PlayableId, PlayableItem,
+    PlaylistId, PlaylistItem, PlaylistTracksRef, PrivateUser, SavedTrack, SimplifiedArtist,
+    SimplifiedPlaylist, TrackId,
 };
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
@@ -414,6 +414,25 @@ pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> 
         Ok(())
     }
 }
+
+caching!(
+    recently_played,
+    Vec<PlayHistory>,
+    // TODO: maybe use previous
+    |_, _| async move {
+        trace!("Getting queue");
+
+        let spotify = spotify().await;
+        Ok(retrying(
+            move |_| async move { spotify.current_user_recently_played(None, None).await },
+            (),
+        )
+        .await?
+        .items)
+    },
+    RECENTLY_PLAYED,
+    Duration::seconds(1)
+);
 
 #[cfg(feature = "server")]
 fn simplified_playlist(playlist: &rspotify_model::FullPlaylist) -> SimplifiedPlaylist {
