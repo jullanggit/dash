@@ -206,18 +206,21 @@ caching!(
         use std::collections::HashMap;
 
         let spotify = spotify().await.clone();
-        let playlists = rating_playlists()?.await;
         let mut previous = previous.unwrap_or_default();
-
-        let previous_snapshot_ids = std::mem::take(&mut previous.playlist_snapshot_ids);
         let mut ratings = previous.tracks;
 
-        trace!("Getting ratings");
-
+        // snapshot handling works like the following:
+        // - we fetch playlists fresh once at the start and once at the end
+        // - if both times the snapshot ID is equal, we are sure to have read the playlist at that snapshot ID and persist it into the analyzation
+        // - if the fresh snapshot ID is equal to the persisted one, the playlist hasn't changed, and we skip it.
+        let previous_snapshot_ids = std::mem::take(&mut previous.playlist_snapshot_ids);
+        let playlists = rating_playlists().await?;
         let current_snapshot_ids = playlists
             .iter()
             .map(|(_, playlist)| (playlist.id.clone(), playlist.snapshot_id.clone()))
             .collect::<HashMap<_, _>>();
+
+        trace!("Getting ratings");
 
         for (rating, playlist) in playlists {
             if previous_snapshot_ids
@@ -452,7 +455,8 @@ caching!(
 async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
     let playlist_name = format!("{:.2}", rating);
 
-    if let Some((_, playlist)) = rating_playlists_server()
+    if let Some((_, playlist)) = rating_playlists()
+        .await?
         .await
         .into_iter()
         .find(|(playlist_rating, _)| *playlist_rating == rating)
@@ -473,15 +477,6 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
     .await
     .context("Failed to create rating playlist")?;
     let playlist = simplified_playlist(&playlist);
-
-    let mut cache = RATING_PLAYLISTS.in_mem_cache.write().await;
-    let playlists = cache.get_or_insert_default();
-    if !playlists
-        .iter()
-        .any(|(playlist_rating, _)| *playlist_rating == rating)
-    {
-        playlists.push((rating, playlist.clone()));
-    }
 
     Ok(playlist)
 }
