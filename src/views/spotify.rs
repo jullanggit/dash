@@ -7,6 +7,12 @@ use time::Duration;
 
 const MOBILE_BREAKPOINT_PX: u16 = 768;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SubmitStatus {
+    Success,
+    Error,
+}
+
 #[component]
 pub fn Spotify() -> Element {
     let playback_state = use_playback_state();
@@ -67,6 +73,7 @@ fn Player(
         }
     });
     let mut pending_rating = use_signal(|| None::<(TrackId<'static>, f32)>);
+    let mut submit_status = use_signal(|| None::<(TrackId<'static>, SubmitStatus)>);
     let mut history_refresh = use_signal(|| 0_u64);
 
     let genres = use_resource(move || async move {
@@ -114,6 +121,13 @@ fn Player(
         _ => None,
     };
     let current_rating = pending_rating_value.or(fetched_rating);
+    let current_submit_status =
+        submit_status
+            .read()
+            .as_ref()
+            .and_then(|(submitted_track_id, status)| {
+                (Some(submitted_track_id) == current_track_id.as_ref()).then_some(*status)
+            });
     let slider_key = current_track_id
         .as_ref()
         .map(ToString::to_string)
@@ -164,18 +178,22 @@ fn Player(
                             key: "{slider_key}",
                             current_rating,
                             mobile_mode,
+                            submit_status: current_submit_status,
                             on_select: move |selected_rating| async move {
                                 let Some(track_id) = track_id.read().clone() else {
                                     return;
                                 };
+                                let track_id = track_id.into_static();
                                 match add_rating(track_id.clone(), selected_rating as f32).await {
                                     Ok(canonical_rating) => {
-                                        pending_rating.set(Some((track_id, canonical_rating)));
+                                        pending_rating.set(Some((track_id.clone(), canonical_rating)));
+                                        submit_status.set(Some((track_id, SubmitStatus::Success)));
                                         rating.restart();
                                         history_refresh += 1;
                                     }
                                     Err(error) => {
                                         pending_rating.set(None);
+                                        submit_status.set(Some((track_id, SubmitStatus::Error)));
                                         error!("Failed to submit rating: {error}");
                                     }
                                 }
@@ -236,6 +254,7 @@ fn TrackRatingHistory(track_id: Option<TrackId<'static>>) -> Element {
 fn HoverSlider(
     current_rating: Option<f32>,
     mobile_mode: bool,
+    submit_status: Option<SubmitStatus>,
     on_select: EventHandler<f64>,
 ) -> Element {
     let mut hovering = use_signal(|| false);
@@ -244,6 +263,16 @@ fn HoverSlider(
     let mut width = use_signal(|| 1.0_f64); // avoid divide-by-zero
     let resting_progress = current_rating.unwrap_or(0.0).clamp(0.0, 5.0) as f64;
     let displayed_rating = preview_rating.read().unwrap_or(resting_progress);
+    let submit_label = match submit_status {
+        Some(SubmitStatus::Success) => "Success",
+        Some(SubmitStatus::Error) => "Error",
+        None => "Submit",
+    };
+    let submit_background = match submit_status {
+        Some(SubmitStatus::Success) => "#1db954",
+        Some(SubmitStatus::Error) => "#d64545",
+        None => "#f59e0b",
+    };
 
     rsx! {
         div {
@@ -343,15 +372,15 @@ fn HoverSlider(
             div {
                 style: format!(
                     "
-                                                                                                position: absolute;
-                                                                                                top: 0;
-                                                                                                bottom: 0;
-                                                                                                left: {}px;
-                                                                                                width: 2px;
-                                                                                                background: white;
-                                                                                                transform: translateX(-50%);
-                                                                                                pointer-events: none;
-                                                                                            ",
+                                                                                                                                    position: absolute;
+                                                                                                                                    top: 0;
+                                                                                                                                    bottom: 0;
+                                                                                                                                    left: {}px;
+                                                                                                                                    width: 2px;
+                                                                                                                                    background: white;
+                                                                                                                                    transform: translateX(-50%);
+                                                                                                                                    pointer-events: none;
+                                                                                                                                ",
                     (displayed_rating / 5.0) * *width.read(),
                 ),
             }
@@ -363,7 +392,7 @@ fn HoverSlider(
                     margin-top: 12px;
                     padding: 12px 16px;
                     border-radius: 8px;
-                    background: #1db954;
+                    background: {submit_background};
                     color: #111;
                     font-weight: 700;
                 ",
@@ -371,7 +400,7 @@ fn HoverSlider(
                     let rating = preview_rating.read().unwrap_or(resting_progress);
                     on_select.call(rating);
                 },
-                "Submit"
+                "{submit_label}"
             }
         }
     }
