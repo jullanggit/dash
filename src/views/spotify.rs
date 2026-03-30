@@ -74,7 +74,15 @@ fn Player(
     });
     let mut pending_rating = use_signal(|| None::<(TrackId<'static>, f32)>);
     let mut submit_status = use_signal(|| None::<(TrackId<'static>, SubmitStatus)>);
-    let mut history_refresh = use_signal(|| 0_u64);
+    let mut canonical_history_chart = use_resource(move || {
+        let id = track_id.read().clone().map(TrackId::into_static);
+        async move {
+            match id {
+                Some(id) => Some(canonical_rating_history_chart(id).await),
+                None => None,
+            }
+        }
+    });
 
     let genres = use_resource(move || async move {
         // let to avoid holding the 'read' across await points
@@ -132,7 +140,6 @@ fn Player(
         .as_ref()
         .map(ToString::to_string)
         .unwrap_or_else(|| "no-track".to_string());
-    let history_key = format!("{slider_key}-{}", history_refresh());
     rsx!(
         if image.is_some() || track.is_some() {
             div { style: "
@@ -189,7 +196,7 @@ fn Player(
                                         pending_rating.set(Some((track_id.clone(), canonical_rating)));
                                         submit_status.set(Some((track_id, SubmitStatus::Success)));
                                         rating.restart();
-                                        history_refresh += 1;
+                                        canonical_history_chart.restart();
                                     }
                                     Err(error) => {
                                         pending_rating.set(None);
@@ -201,53 +208,33 @@ fn Player(
                         }
                     }
                 }
-                TrackRatingHistory {
-                    key: "{history_key}",
-                    track_id: current_track_id.map(TrackId::into_static),
+                div { style: "width: min(100%, 960px);",
+                    match &*canonical_history_chart.read() {
+                        Some(Some(Ok(Some(chart)))) => rsx! {
+                            iframe {
+                                title: "Canonical rating history",
+                                srcdoc: "{chart}",
+                                width: "100%",
+                                height: "600",
+                                scrolling: "no",
+                                style: "border: 0; background: transparent; overflow: hidden;",
+                            }
+                        },
+                        Some(Some(Ok(None))) => rsx! {},
+                        Some(Some(Err(error))) => rsx! {
+                            p { "Failed to load canonical rating history: {error}" }
+                        },
+                        Some(None) => rsx! {
+                            p { "No track playing." }
+                        },
+                        None => rsx! {
+                            p { "Loading canonical rating history..." }
+                        },
+                    }
                 }
             }
         }
     )
-}
-
-#[component]
-fn TrackRatingHistory(track_id: Option<TrackId<'static>>) -> Element {
-    let canonical_history_chart = use_resource(move || {
-        let id = track_id.clone();
-        async move {
-            match id {
-                Some(id) => Some(canonical_rating_history_chart(id).await),
-                None => None,
-            }
-        }
-    });
-
-    rsx! {
-        div { style: "width: min(100%, 960px);",
-            match &*canonical_history_chart.read() {
-                Some(Some(Ok(Some(chart)))) => rsx! {
-                    iframe {
-                        title: "Canonical rating history",
-                        srcdoc: "{chart}",
-                        width: "100%",
-                        height: "600",
-                        scrolling: "no",
-                        style: "border: 0; background: transparent; overflow: hidden;",
-                    }
-                },
-                Some(Some(Ok(None))) => rsx! {},
-                Some(Some(Err(error))) => rsx! {
-                    p { "Failed to load canonical rating history: {error}" }
-                },
-                Some(None) => rsx! {
-                    p { "No track playing." }
-                },
-                None => rsx! {
-                    p { "Loading canonical rating history..." }
-                },
-            }
-        }
-    }
 }
 
 #[component]
@@ -372,15 +359,15 @@ fn HoverSlider(
             div {
                 style: format!(
                     "
-                                                                                                                                    position: absolute;
-                                                                                                                                    top: 0;
-                                                                                                                                    bottom: 0;
-                                                                                                                                    left: {}px;
-                                                                                                                                    width: 2px;
-                                                                                                                                    background: white;
-                                                                                                                                    transform: translateX(-50%);
-                                                                                                                                    pointer-events: none;
-                                                                                                                                ",
+                                                                                                                                                position: absolute;
+                                                                                                                                                top: 0;
+                                                                                                                                                bottom: 0;
+                                                                                                                                                left: {}px;
+                                                                                                                                                width: 2px;
+                                                                                                                                                background: white;
+                                                                                                                                                transform: translateX(-50%);
+                                                                                                                                                pointer-events: none;
+                                                                                                                                            ",
                     (displayed_rating / 5.0) * *width.read(),
                 ),
             }
