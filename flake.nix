@@ -55,6 +55,7 @@
             tailwindcss
             openssl
             pkg-config
+            binaryen # wasm-opt
           ];
         };
       }
