@@ -390,7 +390,7 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         })
         .collect::<Vec<_>>();
 
-    let mut chart = base_chart("Canonical Rating Correlations")
+    let mut chart = base_chart("")
         .tooltip(Tooltip::new().trigger(Trigger::Item))
         .x_axis(
             Axis::new()
