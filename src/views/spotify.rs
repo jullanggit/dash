@@ -5,12 +5,26 @@ use dioxus::prelude::*;
 use rspotify_model::{CurrentPlaybackContext, FullTrack, PlayableItem, TrackId};
 use time::Duration;
 
+const MOBILE_BREAKPOINT_PX: u16 = 768;
+
 #[component]
 pub fn Spotify() -> Element {
     let playback_state = use_playback_state();
-    let charts = use_server_fn(charts, Duration::MINUTE);
+    let is_mobile = use_is_mobile();
+    let mobile_mode = is_mobile() != Some(false);
     rsx!(
-        Player { playback_state }
+        Player { playback_state, mobile_mode }
+        if !mobile_mode {
+            DesktopCharts {}
+        }
+    )
+}
+
+#[component]
+fn DesktopCharts() -> Element {
+    let charts = use_server_fn(charts, Duration::MINUTE);
+
+    rsx! {
         h2 { "Charts" }
         match &*charts.read_unchecked() {
             Some(charts) => {
@@ -28,11 +42,14 @@ pub fn Spotify() -> Element {
             }
             None => rsx! { "Loading charts..." },
         }
-    )
+    }
 }
 
 #[component]
-fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Element {
+fn Player(
+    playback_state: Signal<Option<Option<CurrentPlaybackContext>>>,
+    mobile_mode: bool,
+) -> Element {
     let track_id = playback_state.map(move |state| match state {
         Some(Some(CurrentPlaybackContext {
             item: Some(PlayableItem::Track(FullTrack { id, .. })),
@@ -50,15 +67,7 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
         }
     });
     let mut pending_rating = use_signal(|| None::<(TrackId<'static>, f32)>);
-    let mut canonical_history_chart = use_resource(move || {
-        let id = track_id.read().clone().map(TrackId::into_static);
-        async move {
-            match id {
-                Some(id) => Some(canonical_rating_history_chart(id).await),
-                None => None,
-            }
-        }
-    });
+    let mut history_refresh = use_signal(|| 0_u64);
 
     let genres = use_resource(move || async move {
         // let to avoid holding the 'read' across await points
@@ -105,6 +114,11 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
         _ => None,
     };
     let current_rating = pending_rating_value.or(fetched_rating);
+    let slider_key = current_track_id
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "no-track".to_string());
+    let history_key = format!("{slider_key}-{}", history_refresh());
     rsx!(
         if image.is_some() || track.is_some() {
             div { style: "
@@ -147,7 +161,9 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                         br {}
                         br {}
                         HoverSlider {
+                            key: "{slider_key}",
                             current_rating,
+                            mobile_mode,
                             on_select: move |selected_rating| async move {
                                 let Some(track_id) = track_id.read().clone() else {
                                     return;
@@ -156,7 +172,7 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                                     Ok(canonical_rating) => {
                                         pending_rating.set(Some((track_id, canonical_rating)));
                                         rating.restart();
-                                        canonical_history_chart.restart();
+                                        history_refresh += 1;
                                     }
                                     Err(error) => {
                                         pending_rating.set(None);
@@ -167,28 +183,10 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                         }
                     }
                 }
-                div { style: "width: min(100%, 960px);",
-                    match &*canonical_history_chart.read() {
-                        Some(Some(Ok(Some(chart)))) => rsx! {
-                            iframe {
-                                title: "Canonical rating history",
-                                srcdoc: "{chart}",
-                                width: "100%",
-                                height: "600",
-                                scrolling: "no",
-                                style: "border: 0; background: transparent; overflow: hidden;",
-                            }
-                        },
-                        Some(Some(Ok(None))) => rsx! {},
-                        Some(Some(Err(error))) => rsx! {
-                            p { "Failed to load canonical rating history: {error}" }
-                        },
-                        Some(None) => rsx! {
-                            p { "No track playing." }
-                        },
-                        None => rsx! {
-                            p { "Loading canonical rating history..." }
-                        },
+                if !mobile_mode {
+                    DesktopCanonicalHistory {
+                        key: "{history_key}",
+                        track_id: current_track_id.map(TrackId::into_static),
                     }
                 }
             }
@@ -197,7 +195,51 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
 }
 
 #[component]
-fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Element {
+fn DesktopCanonicalHistory(track_id: Option<TrackId<'static>>) -> Element {
+    let canonical_history_chart = use_resource(move || {
+        let id = track_id.clone();
+        async move {
+            match id {
+                Some(id) => Some(canonical_rating_history_chart(id).await),
+                None => None,
+            }
+        }
+    });
+
+    rsx! {
+        div { style: "width: min(100%, 960px);",
+            match &*canonical_history_chart.read() {
+                Some(Some(Ok(Some(chart)))) => rsx! {
+                    iframe {
+                        title: "Canonical rating history",
+                        srcdoc: "{chart}",
+                        width: "100%",
+                        height: "600",
+                        scrolling: "no",
+                        style: "border: 0; background: transparent; overflow: hidden;",
+                    }
+                },
+                Some(Some(Ok(None))) => rsx! {},
+                Some(Some(Err(error))) => rsx! {
+                    p { "Failed to load canonical rating history: {error}" }
+                },
+                Some(None) => rsx! {
+                    p { "No track playing." }
+                },
+                None => rsx! {
+                    p { "Loading canonical rating history..." }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn HoverSlider(
+    current_rating: Option<f32>,
+    mobile_mode: bool,
+    on_select: EventHandler<f64>,
+) -> Element {
     let mut hovering = use_signal(|| false);
     let mut interacting = use_signal(|| false);
     let mut preview_rating = use_signal(|| None::<f64>);
@@ -259,24 +301,32 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
                 let x = evt.element_coordinates().x.clamp(0.0, width);
                 let rating = ((x / width).clamp(0.0, 1.0)) * 5.0;
                 interacting.set(false);
-                preview_rating.set(if *hovering.read() { Some(rating) } else { None });
-                on_select.call(rating);
+                if mobile_mode {
+                    preview_rating.set(Some(rating));
+                } else {
+                    preview_rating.set(if *hovering.read() { Some(rating) } else { None });
+                    on_select.call(rating);
+                }
             },
 
             onpointerleave: move |_| {
                 hovering.set(false);
-                if !*interacting.read() {
+                if !mobile_mode && !*interacting.read() {
                     preview_rating.set(None);
                 }
             },
 
             onpointercancel: move |_| {
-                if let Some(rating) = *preview_rating.read() {
-                    on_select.call(rating);
+                if mobile_mode {
+                    interacting.set(false);
+                } else {
+                    if let Some(rating) = *preview_rating.read() {
+                        on_select.call(rating);
+                    }
+                    hovering.set(false);
+                    interacting.set(false);
+                    preview_rating.set(None);
                 }
-                hovering.set(false);
-                interacting.set(false);
-                preview_rating.set(None);
             },
 
             div { style: "
@@ -295,20 +345,54 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
             div {
                 style: format!(
                     "
-                                                position: absolute;
-                                                top: 0;
-                                                bottom: 0;
-                                                left: {}px;
-                                                width: 2px;
-                                                background: white;
-                                                transform: translateX(-50%);
-                                                pointer-events: none;
-                                            ",
+                                                                                    position: absolute;
+                                                                                    top: 0;
+                                                                                    bottom: 0;
+                                                                                    left: {}px;
+                                                                                    width: 2px;
+                                                                                    background: white;
+                                                                                    transform: translateX(-50%);
+                                                                                    pointer-events: none;
+                                                                                ",
                     (displayed_rating / 5.0) * *width.read(),
                 ),
             }
         }
+        if mobile_mode {
+            button {
+                style: "
+                    width: min(400px, 100%);
+                    margin-top: 12px;
+                    padding: 12px 16px;
+                    border-radius: 8px;
+                    background: #1db954;
+                    color: #111;
+                    font-weight: 700;
+                ",
+                onclick: move |_| {
+                    let rating = preview_rating.read().unwrap_or(resting_progress);
+                    on_select.call(rating);
+                },
+                "Submit"
+            }
+        }
     }
+}
+
+fn use_is_mobile() -> Signal<Option<bool>> {
+    let mut is_mobile = use_signal(|| None);
+
+    use_effect(move || {
+        spawn(async move {
+            let eval = document::eval(&format!(
+                "return window.matchMedia('(max-width: {}px)').matches;",
+                MOBILE_BREAKPOINT_PX
+            ));
+            is_mobile.set(eval.join::<bool>().await.ok());
+        });
+    });
+
+    is_mobile
 }
 
 #[server]
