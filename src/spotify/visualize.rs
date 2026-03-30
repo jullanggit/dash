@@ -162,6 +162,7 @@ pub fn num_ratings_history(data: &Analyzation) -> Chart {
 fn canonical_rating_history_chart<'a>(
     tracks: impl IntoIterator<Item = (&'a FullTrack, &'a TrackAnalyzation)>,
     title: &'static str,
+    show_added_rating_points: bool,
 ) -> Chart {
     use charming::element::{Formatter, JsFunction, Tooltip, Trigger};
 
@@ -172,6 +173,12 @@ fn canonical_rating_history_chart<'a>(
         .map(|(song, analyzed)| {
             (
                 song,
+                analyzed
+                    .rating_history
+                    .iter()
+                    .copied()
+                    .map(to_composite_values)
+                    .collect::<Vec<Vec<CompositeValue>>>(),
                 analyzed
                     .canonical_rating_history
                     .iter()
@@ -191,13 +198,13 @@ fn canonical_rating_history_chart<'a>(
                                                            //     "return params.map(p => p.seriesName).join('<br/>');",
                                                            // ))),
                 ),
-            |chart, (track, history)| {
+            |chart, (track, rating_history, canonical_history)| {
                 track.name.hash(&mut hasher);
                 let hash: u64 = hasher.finish();
                 let [r, g, b] = array::from_fn(|i| ((hash >> (i * 8)) & 0xFF) as u8);
                 let color = Color::Value(format!("rgb({r}, {g}, {b})"));
 
-                chart.series(
+                let chart = chart.series(
                     Line::new()
                         .name(&track.name)
                         .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
@@ -208,9 +215,29 @@ fn canonical_rating_history_chart<'a>(
                         ))
                         // .show_symbol(false)
                         .item_style(ItemStyle::new().color(color.clone()))
-                        .line_style(LineStyle::new().color(color))
+                        .line_style(LineStyle::new().color(color.clone()))
                         .smooth(true)
-                        .data(history),
+                        .data(canonical_history),
+                );
+
+                if !show_added_rating_points {
+                    return chart;
+                }
+
+                chart.series(
+                    Line::new()
+                        .name("Added rating")
+                        .symbol(charming::element::Symbol::Circle)
+                        .symbol_size(8)
+                        .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
+                            Formatter::Function(JsFunction::new_with_args(
+                                "params",
+                                "return `${params.seriesName}: ${params.value[1].toFixed(2)}`",
+                            )),
+                        ))
+                        .item_style(ItemStyle::new().color(color.clone()))
+                        .line_style(LineStyle::new().width(0.0).color(color))
+                        .data(rating_history),
                 )
             },
         )
@@ -222,11 +249,12 @@ pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
             .iter()
             .map(|(track, analyzed)| (track, analyzed)),
         "Canonical Rating Histories",
+        false,
     )
 }
 
 pub fn track_canonical_rating_history(track: &FullTrack, analyzed: &TrackAnalyzation) -> Chart {
-    canonical_rating_history_chart([(track, analyzed)], "Canonical Rating History")
+    canonical_rating_history_chart([(track, analyzed)], "Canonical Rating History", true)
 }
 
 pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
