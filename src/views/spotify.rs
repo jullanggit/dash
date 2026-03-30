@@ -183,11 +183,9 @@ fn Player(
                         }
                     }
                 }
-                if !mobile_mode {
-                    DesktopCanonicalHistory {
-                        key: "{history_key}",
-                        track_id: current_track_id.map(TrackId::into_static),
-                    }
+                TrackRatingHistory {
+                    key: "{history_key}",
+                    track_id: current_track_id.map(TrackId::into_static),
                 }
             }
         }
@@ -195,7 +193,7 @@ fn Player(
 }
 
 #[component]
-fn DesktopCanonicalHistory(track_id: Option<TrackId<'static>>) -> Element {
+fn TrackRatingHistory(track_id: Option<TrackId<'static>>) -> Element {
     let canonical_history_chart = use_resource(move || {
         let id = track_id.clone();
         async move {
@@ -345,15 +343,15 @@ fn HoverSlider(
             div {
                 style: format!(
                     "
-                                                                                    position: absolute;
-                                                                                    top: 0;
-                                                                                    bottom: 0;
-                                                                                    left: {}px;
-                                                                                    width: 2px;
-                                                                                    background: white;
-                                                                                    transform: translateX(-50%);
-                                                                                    pointer-events: none;
-                                                                                ",
+                                                                                                position: absolute;
+                                                                                                top: 0;
+                                                                                                bottom: 0;
+                                                                                                left: {}px;
+                                                                                                width: 2px;
+                                                                                                background: white;
+                                                                                                transform: translateX(-50%);
+                                                                                                pointer-events: none;
+                                                                                            ",
                     (displayed_rating / 5.0) * *width.read(),
                 ),
             }
