@@ -64,7 +64,8 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
                         "user-library-read",
                         "user-read-currently-playing",
                         "user-read-playback-state",
-                        "user-modify-playback-state"
+                        "user-modify-playback-state",
+                        "user-read-recently-played"
                     ),
                     ..Default::default()
                 },

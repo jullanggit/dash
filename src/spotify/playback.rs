@@ -123,8 +123,7 @@ fn choose_random_song(
             .map(|recent_track| {
                 weight_decay(
                     now,
-                    UtcDateTime::from_unix_timestamp(recent_track.played_at.timestamp_millis())
-                        .unwrap(),
+                    UtcDateTime::from_unix_timestamp(recent_track.played_at.timestamp()).unwrap(),
                 )
             })
             .unwrap_or(1.);
