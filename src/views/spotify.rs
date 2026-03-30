@@ -169,7 +169,7 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                 }
                 div { style: "width: min(100%, 960px);",
                     match &*canonical_history_chart.read() {
-                        Some(Some(Ok(chart))) => rsx! {
+                        Some(Some(Ok(Some(chart)))) => rsx! {
                             iframe {
                                 title: "Canonical rating history",
                                 srcdoc: "{chart}",
@@ -179,6 +179,7 @@ fn Player(playback_state: Signal<Option<Option<CurrentPlaybackContext>>>) -> Ele
                                 style: "border: 0; background: transparent; overflow: hidden;",
                             }
                         },
+                        Some(Some(Ok(None))) => rsx! {},
                         Some(Some(Err(error))) => rsx! {
                             p { "Failed to load canonical rating history: {error}" }
                         },
@@ -294,15 +295,15 @@ fn HoverSlider(current_rating: Option<f32>, on_select: EventHandler<f64>) -> Ele
             div {
                 style: format!(
                     "
-                        position: absolute;
-                        top: 0;
-                        bottom: 0;
-                        left: {}px;
-                        width: 2px;
-                        background: white;
-                        transform: translateX(-50%);
-                        pointer-events: none;
-                    ",
+                                                position: absolute;
+                                                top: 0;
+                                                bottom: 0;
+                                                left: {}px;
+                                                width: 2px;
+                                                background: white;
+                                                transform: translateX(-50%);
+                                                pointer-events: none;
+                                            ",
                     (displayed_rating / 5.0) * *width.read(),
                 ),
             }
@@ -346,9 +347,8 @@ async fn charts() -> Result<Vec<String>> {
 }
 
 #[server]
-async fn canonical_rating_history_chart(track_id: TrackId<'static>) -> Result<String> {
+async fn canonical_rating_history_chart(track_id: TrackId<'static>) -> Result<Option<String>> {
     use crate::spotify::{ratings_server, track_canonical_rating_history};
-    use anyhow::anyhow;
     use charming::HtmlRenderer;
 
     let analyzation = ratings_server().await;
@@ -357,12 +357,17 @@ async fn canonical_rating_history_chart(track_id: TrackId<'static>) -> Result<St
         .iter()
         .find(|(track, _)| track.id.as_ref() == Some(&track_id))
     else {
-        return Err(anyhow!("Track not found in ratings analyzation").into());
+        return Ok(None);
     };
+
+    if analyzed.rating_history.is_empty() {
+        return Ok(None);
+    }
 
     HtmlRenderer::new("Renderer", 960, 600)
         .render(&track_canonical_rating_history(track, analyzed))
         .map(sanitize_chart_html)
+        .map(Some)
         .map_err(Into::into)
 }
 
