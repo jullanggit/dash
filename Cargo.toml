@@ -2,7 +2,7 @@
 name = "dash"
 version = "0.1.0"
 authors = ["Jul Lang <jullanggit@proton.me>"]
-license = "MPL-2.0"
+license = "AGPL-3.0"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
