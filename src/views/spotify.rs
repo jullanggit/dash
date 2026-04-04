@@ -1,5 +1,8 @@
-use crate::spotify::{
-    add_rating, caching::use_server_fn, genres, rating as fetch_rating, use_playback_state,
+use crate::{
+    assert_authenticated,
+    spotify::{
+        add_rating, caching::use_server_fn, genres, rating as fetch_rating, use_playback_state,
+    },
 };
 use dioxus::prelude::*;
 use rspotify_model::{CurrentPlaybackContext, FullTrack, PlayableItem, TrackId};
@@ -416,8 +419,9 @@ async fn charts() -> Result<Vec<String>> {
         canonical_rating_distribution, genre_proportions, num_ratings_history, ratings_server,
         song_canonical_rating_histories,
     };
-
     use charming::HtmlRenderer;
+
+    assert_authenticated!();
 
     let renderer = HtmlRenderer::new("Renderer", 1920, 1080);
 
@@ -448,6 +452,8 @@ async fn charts() -> Result<Vec<String>> {
 async fn canonical_rating_history_chart(track_id: TrackId<'static>) -> Result<Option<String>> {
     use crate::spotify::{ratings_server, track_canonical_rating_history};
     use charming::HtmlRenderer;
+
+    assert_authenticated!();
 
     let analyzation = ratings_server().await;
     let Some((track, analyzed)) = analyzation

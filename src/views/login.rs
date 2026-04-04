@@ -21,7 +21,7 @@ pub fn Login() -> Element {
                                 error.set(None);
                                 nav.push(Route::Home {});
                             }
-                            Err(_) => error.set(Some("unauthenticated".to_string())),
+                            Err(e) => error.set(Some(format!("unauthenticated: {e}"))),
                         }
                     }
                 },

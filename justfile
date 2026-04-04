@@ -1,7 +1,7 @@
 # Run checks for both server and web
 check:
-    cargo clippy --features server
-    cargo clippy --features web
+    cargo clippy --features server -Zno-index-update
+    cargo clippy --features web -Zno-index-update
 
 # Serve website
 serve:

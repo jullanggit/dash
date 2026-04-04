@@ -4,8 +4,11 @@ use argon2::{
     Argon2,
     password_hash::{PasswordHasher, SaltString},
 };
+
+#[cfg(feature = "bin")]
 use rand_core::OsRng;
 
+#[cfg(feature = "bin")]
 fn main() {
     let mut password = String::new();
     stdin().read_line(&mut password).unwrap();
@@ -17,3 +20,6 @@ fn main() {
 
     println!("{hash}");
 }
+
+#[cfg(not(feature = "bin"))]
+fn main() {}

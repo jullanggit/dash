@@ -1,9 +1,8 @@
-use crate::caching;
-use crate::spotify::caching::use_server_fn;
+use crate::{caching, spotify::caching::use_server_fn};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
-use time::Duration;
-use time::UtcDateTime;
+use std::path::PathBuf;
+use time::{Duration, UtcDateTime};
 #[cfg(feature = "server")]
 use tokio::sync::{Mutex, RwLock};
 
@@ -25,7 +24,7 @@ structstruck::strike!(
     #[structstruck::each[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]]
     #[structstruck::each[serde(rename_all = "camelCase")]]
     pub struct Config {
-      pub password_file: String,
+      pub password_file: PathBuf,
       pub mimir: struct {
         pub url: String,
       },
@@ -55,7 +54,7 @@ structstruck::strike!(
 impl Config {
     fn default() -> Self {
         Self {
-            password_file: "/run/secrets/dashboard-password.hash".to_string(),
+            password_file: "/run/secrets/dashboard-password.hash".into(),
             mimir: Mimir {
                 url: "localhost:3001/mimir".to_string(),
             },

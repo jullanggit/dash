@@ -6,7 +6,10 @@ use dioxus::fullstack::{
 };
 use dioxus::prelude::*;
 use std::{
+    borrow::Cow,
     collections::HashMap,
+    env,
+    path::Path,
     sync::{LazyLock, Mutex},
 };
 use time::{Duration, UtcDateTime};
@@ -69,6 +72,8 @@ fn create_session() -> String {
 
 #[cfg(feature = "server")]
 async fn verify_password(password: &str) -> Result<bool> {
+    use std::path::Path;
+
     use crate::config::config_server;
     use argon2::{
         Argon2,
@@ -76,7 +81,7 @@ async fn verify_password(password: &str) -> Result<bool> {
     };
 
     let config = config_server().await;
-    let password_hash = tokio::fs::read_to_string(&config.password_file)
+    let password_hash = tokio::fs::read_to_string(&expand_tilde(&config.password_file))
         .await
         .context("failed to read password file")?;
     let parsed_hash = PasswordHash::new(password_hash.trim())
@@ -85,6 +90,15 @@ async fn verify_password(password: &str) -> Result<bool> {
     Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed_hash)
         .is_ok())
+}
+
+fn expand_tilde<'a>(path: &'a Path) -> Cow<'a, Path> {
+    if path.starts_with("~") {
+        let home = env::home_dir().expect("failed to get home directory");
+        Cow::Owned(home.join(path.strip_prefix("~").unwrap()))
+    } else {
+        Cow::Borrowed(path)
+    }
 }
 
 #[cfg(feature = "server")]
@@ -105,17 +119,14 @@ pub async fn assert_authenticated() -> Result<()> {
     }
 }
 
-#[server(endpoint = "/login")]
+#[server]
 pub async fn login(password: String) -> Result<()> {
-    #[cfg(feature = "server")]
-    {
-        if !verify_password(&password).await? {
-            return Err(anyhow!("unauthenticated").into());
-        }
-
-        let session_id = create_session();
-        set_session_cookie(&session_id)?;
+    if !verify_password(&password).await? {
+        return Err(anyhow!("unauthenticated").into());
     }
+
+    let session_id = create_session();
+    set_session_cookie(&session_id)?;
 
     Ok(())
 }
