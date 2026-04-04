@@ -36,13 +36,34 @@ fn session_expiry() -> UtcDateTime {
     UtcDateTime::now() + SESSION_MAX_AGE
 }
 
-#[cfg(feature = "server")]
-fn current_session_id() -> Option<String> {
-    let context = FullstackContext::current()?;
-    let parts = context.parts_mut();
-    let cookie_header = parts.headers.get(header::COOKIE)?.to_str().ok()?;
+enum SessionResult {
+    Id(String),
+    NoId,
+    NoContext,
+}
 
-    parse_cookie(cookie_header, SESSION_COOKIE_NAME)
+#[cfg(feature = "server")]
+fn current_session_id() -> SessionResult {
+    let context = match FullstackContext::current() {
+        Some(context) => context,
+        None => return SessionResult::NoContext,
+    };
+    let parts = context.parts_mut();
+
+    macro_rules! orNoId {
+        ($expr:expr) => {
+            match $expr {
+                Some(value) => value,
+                None => return SessionResult::NoId,
+            }
+        };
+    }
+    let cookie_header = orNoId!(orNoId!(parts.headers.get(header::COOKIE)).to_str().ok());
+
+    match parse_cookie(cookie_header, SESSION_COOKIE_NAME) {
+        Some(session_id) => SessionResult::Id(session_id),
+        None => SessionResult::NoId,
+    }
 }
 
 #[cfg(feature = "server")]
@@ -104,8 +125,10 @@ fn expand_tilde<'a>(path: &'a Path) -> Cow<'a, Path> {
 #[cfg(feature = "server")]
 pub async fn assert_authenticated() -> Result<()> {
     let err = anyhow!("unauthenticated").into();
-    let Some(session_id) = current_session_id() else {
-        return Err(err);
+    let session_id = match current_session_id() {
+        SessionResult::Id(session_id) => session_id,
+        SessionResult::NoContext => return Ok(()), // server-to-server
+        SessionResult::NoId => return Err(err),
     };
 
     let now = UtcDateTime::now();
