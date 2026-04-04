@@ -15,7 +15,7 @@ fn main() {
 
     let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.trim().as_bytes(), &salt)
         .expect("password hashing should succeed");
 
     println!("{hash}");

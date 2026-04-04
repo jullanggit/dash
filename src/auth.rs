@@ -88,7 +88,7 @@ async fn verify_password(password: &str) -> Result<bool> {
         .map_err(|error| anyhow!("failed to parse password hash: {error}"))?;
 
     Ok(Argon2::default()
-        .verify_password(password.as_bytes(), &parsed_hash)
+        .verify_password(password.trim().as_bytes(), &parsed_hash)
         .is_ok())
 }
 
@@ -122,7 +122,7 @@ pub async fn assert_authenticated() -> Result<()> {
 #[server]
 pub async fn login(password: String) -> Result<()> {
     if !verify_password(&password).await? {
-        return Err(anyhow!("unauthenticated").into());
+        return Err(anyhow!("Wrong password").into());
     }
 
     let session_id = create_session();
