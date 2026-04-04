@@ -602,11 +602,13 @@ async fn update_rating_caches(
 // TODO: maybe return None if there are no ratings yet and display that in the ui
 #[server]
 pub async fn rating(track_id: TrackId<'static>) -> Result<f32> {
+    crate::assert_authenticated!();
     Ok(ratings_server().await.rating(track_id))
 }
 
 #[server]
 pub async fn add_rating(track_id: TrackId<'static>, rating: f32) -> Result<f32> {
+    crate::assert_authenticated!();
     let rating = (rating * 100.0).round() / 100.0;
     let playlist = get_or_create_playlist(rating).await?;
     let cached_ratings = ratings_server().await;
@@ -722,6 +724,7 @@ caching!(
 );
 #[server]
 pub async fn weighted_playback(playlist: PlaylistId<'static>, enabled: bool) -> Result<()> {
+    crate::assert_authenticated!();
     let mut option = WEIGHTED_PLAYBACK_ENABLED.in_mem_cache.write().await;
     let set = option.get_or_insert_with(HashSet::new);
     if enabled {

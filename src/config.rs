@@ -25,6 +25,7 @@ structstruck::strike!(
     #[structstruck::each[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]]
     #[structstruck::each[serde(rename_all = "camelCase")]]
     pub struct Config {
+      pub password_file: String,
       pub mimir: struct {
         pub url: String,
       },
@@ -54,6 +55,7 @@ structstruck::strike!(
 impl Config {
     fn default() -> Self {
         Self {
+            password_file: "/run/secrets/dashboard-password.hash".to_string(),
             mimir: Mimir {
                 url: "localhost:3001/mimir".to_string(),
             },

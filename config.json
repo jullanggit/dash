@@ -1,4 +1,5 @@
 {
+  "passwordFile": "/run/secrets/dashboard-password.hash",
   "mimir": {
     "url": "localhost:3001/mimir"
   },

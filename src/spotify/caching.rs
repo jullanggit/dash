@@ -66,6 +66,7 @@ macro_rules! caching {
         /// Client-Server function, returns Result for transport errors
         #[server]
         pub async fn $fn_name() -> Result<$return> {
+            crate::assert_authenticated!();
             Ok(${ concat($fn_name, _server) }().await)
         }
 
@@ -99,6 +100,7 @@ macro_rules! caching_hashmap {
         /// Client-Server function, returns Result for transport errors
         #[server]
         pub async fn $fn_name(key: $key) -> Result<$return> {
+            crate::assert_authenticated!();
             Ok(${ concat($fn_name, _server) }(key).await)
         }
 
