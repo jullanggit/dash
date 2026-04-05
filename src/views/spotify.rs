@@ -1,7 +1,8 @@
 use crate::{
     assert_authenticated,
     spotify::{
-        add_rating, caching::use_server_fn, genres, rating as fetch_rating, use_playback_state,
+        add_rating, caching::use_server_fn, genres, rating_if_recently_rated as fetch_rating,
+        use_playback_state,
     },
 };
 use dioxus::prelude::*;
@@ -128,7 +129,7 @@ fn Player(
                 (Some(pending_track_id) == current_track_id.as_ref()).then_some(*pending_rating)
             });
     let fetched_rating = match &*rating.read() {
-        Some(Some(Ok(rating))) => Some(*rating),
+        Some(Some(Ok(rating))) => *rating,
         _ => None,
     };
     let current_rating = pending_rating_value.or(fetched_rating);
@@ -251,8 +252,8 @@ fn HoverSlider(
     let mut interacting = use_signal(|| false);
     let mut preview_rating = use_signal(|| None::<f64>);
     let mut width = use_signal(|| 1.0_f64); // avoid divide-by-zero
-    let resting_progress = current_rating.unwrap_or(0.0).clamp(0.0, 5.0) as f64;
-    let displayed_rating = preview_rating.read().unwrap_or(resting_progress);
+    let resting_progress = current_rating.map(|rating| rating.clamp(0.0, 5.0) as f64);
+    let displayed_rating = preview_rating.read().or(resting_progress);
     let submit_label = match submit_status {
         Some(SubmitStatus::Success) => "Success",
         Some(SubmitStatus::Error) => "Error",
@@ -356,23 +357,25 @@ fn HoverSlider(
                     font-weight: 600;
                     pointer-events: none;
                 ",
-                {format!("{displayed_rating:.2}")}
+                {displayed_rating.map(|rating| format!("{rating:.2}"))}
             }
 
-            div {
-                style: format!(
-                    "
-                                                                                                                                                                                                                                                                        position: absolute;
-                                                                                                                                                                                                                                                                        top: 0;
-                                                                                                                                                                                                                                                                        bottom: 0;
-                                                                                                                                                                                                                                                                        left: {}px;
-                                                                                                                                                                                                                                                                        width: 2px;
-                                                                                                                                                                                                                                                                        background: white;
-                                                                                                                                                                                                                                                                        transform: translateX(-50%);
-                                                                                                                                                                                                                                                                        pointer-events: none;
-                                                                                                                                                                                                                                                                    ",
-                    (displayed_rating / 5.0) * *width.read(),
-                ),
+            if let Some(displayed_rating) = displayed_rating {
+                div {
+                    style: format!(
+                        "
+                                                            position: absolute;
+                                                            top: 0;
+                                                            bottom: 0;
+                                                            left: {}px;
+                                                            width: 2px;
+                                                            background: white;
+                                                            transform: translateX(-50%);
+                                                            pointer-events: none;
+                                                        ",
+                        (displayed_rating / 5.0) * *width.read(),
+                    ),
+                }
             }
         }
         if mobile_mode {
@@ -387,7 +390,7 @@ fn HoverSlider(
                     font-weight: 700;
                 ",
                 onclick: move |_| {
-                    let rating = preview_rating.read().unwrap_or(resting_progress);
+                    let rating = preview_rating.read().or(resting_progress).unwrap_or(0.0);
                     on_select.call(rating);
                 },
                 "{submit_label}"

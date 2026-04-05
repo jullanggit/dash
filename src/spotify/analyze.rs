@@ -6,7 +6,7 @@ use time::{Date, Duration, UtcDateTime};
 
 // TODO: make this configurable
 pub const DEFAULT_RATING: f32 = 2.5;
-const RATING_OVERWRITE_WINDOW: Duration = Duration::minutes(5);
+pub const RATING_OVERWRITE_WINDOW: Duration = Duration::minutes(5);
 
 /// Contains all analyzations derived from `rating_history` and the providing track
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

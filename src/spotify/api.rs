@@ -1,7 +1,7 @@
 use crate::{
     caching, caching_hashmap,
     spotify::{
-        analyze::{Analyzation, TrackAnalyzation},
+        analyze::{Analyzation, RATING_OVERWRITE_WINDOW, TrackAnalyzation},
         caching::use_server_fn,
     },
 };
@@ -599,11 +599,21 @@ async fn update_rating_caches(
     Ok(canonical_rating)
 }
 
-// TODO: maybe return None if there are no ratings yet and display that in the ui
+/// Returns the canonical rating, if there was a rating within the [RATING_OVERWRITE_WINDOW]
 #[server]
-pub async fn rating(track_id: TrackId<'static>) -> Result<f32> {
+pub async fn rating_if_recently_rated(track_id: TrackId<'static>) -> Result<Option<f32>> {
     crate::assert_authenticated!();
-    Ok(ratings_server().await.rating(track_id))
+    let now = UtcDateTime::now();
+    Ok(ratings_server()
+        .await
+        .tracks
+        .iter()
+        .find(|(track, _)| track.id.as_ref() == Some(&track_id))
+        .and_then(|(_, analyzation)| {
+            analyzation.rating_history.last().and_then(|(time, _)| {
+                (now - *time <= RATING_OVERWRITE_WINDOW).then_some(analyzation.canonical_rating)
+            })
+        }))
 }
 
 #[server]
