@@ -125,7 +125,7 @@ caching!(
         Ok(playlists)
     },
     RATING_PLAYLISTS,
-    Duration::seconds(10)
+    Duration::minutes(3)
 );
 
 /// Paginates the given function, retrying any too-many-request errors.
@@ -289,7 +289,7 @@ caching!(
         Ok(analyzation)
     },
     RATINGS,
-    Duration::seconds(10)
+    Duration::minutes(3)
 );
 
 caching!(
