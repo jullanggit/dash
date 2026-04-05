@@ -52,20 +52,14 @@ fn current_session_id() -> SessionResult {
     trace!("Current context: {context:?}");
     let parts = context.parts_mut();
 
-    macro_rules! orNoId {
-        ($expr:expr) => {
-            match $expr {
-                Some(value) => value,
-                None => return SessionResult::NoId,
-            }
-        };
-    }
-    let cookie_header = orNoId!(orNoId!(parts.headers.get(header::COOKIE)).to_str().ok());
-
-    match parse_cookie(cookie_header, SESSION_COOKIE_NAME) {
-        Some(session_id) => SessionResult::Id(session_id),
-        None => SessionResult::NoId,
-    }
+    parts
+        .headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(|cookie_header| parse_cookie(cookie_header, SESSION_COOKIE_NAME))
+        .map(SessionResult::Id)
+        .unwrap_or(SessionResult::NoId)
 }
 
 #[cfg(feature = "server")]
