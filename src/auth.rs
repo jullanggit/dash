@@ -1,17 +1,18 @@
 #[cfg(feature = "server")]
 use anyhow::{Context, anyhow};
+#[cfg(feature = "server")]
 use dioxus::fullstack::{
     FullstackContext,
     http::{HeaderValue, header},
 };
 use dioxus::prelude::*;
+use std::{borrow::Cow, env, path::Path};
+#[cfg(feature = "server")]
 use std::{
-    borrow::Cow,
     collections::HashMap,
-    env,
-    path::Path,
     sync::{LazyLock, Mutex},
 };
+#[cfg(feature = "server")]
 use time::{Duration, UtcDateTime};
 
 pub const SESSION_COOKIE_NAME: &str = "dashboard_session";
@@ -48,6 +49,7 @@ fn current_session_id() -> SessionResult {
         Some(context) => context,
         None => return SessionResult::NoContext,
     };
+    trace!("Current context: {context:?}");
     let parts = context.parts_mut();
 
     macro_rules! orNoId {
@@ -123,22 +125,31 @@ fn expand_tilde<'a>(path: &'a Path) -> Cow<'a, Path> {
 }
 
 #[cfg(feature = "server")]
-pub async fn assert_authenticated() -> Result<()> {
-    let err = anyhow!("unauthenticated").into();
+fn is_authenticated_server() -> bool {
     let session_id = match current_session_id() {
         SessionResult::Id(session_id) => session_id,
-        SessionResult::NoContext => return Ok(()), // server-to-server
-        SessionResult::NoId => return Err(err),
+        SessionResult::NoContext => return true, // server-to-server
+        SessionResult::NoId => return false,
     };
 
     let now = UtcDateTime::now();
     let mut sessions = SESSIONS.lock().expect("session mutex poisoned");
     sessions.retain(|_, expires_at| *expires_at > now);
+    trace!("Sessions: {sessions:?}");
 
-    if sessions.contains_key(&session_id) {
+    sessions.contains_key(&session_id)
+}
+
+#[server]
+pub async fn assert_authenticated() -> ServerFnResult<()> {
+    if is_authenticated_server() {
         Ok(())
     } else {
-        Err(err)
+        Err(ServerFnError::ServerError {
+            message: "unauthenticated".to_string(),
+            code: 401,
+            details: None,
+        })
     }
 }
 

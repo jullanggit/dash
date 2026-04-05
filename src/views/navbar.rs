@@ -1,4 +1,4 @@
-use crate::Route;
+use crate::{Route, auth};
 use dioxus::prelude::*;
 
 const NAVBAR_CSS: Asset = asset!("/assets/styling/navbar.css");
@@ -10,6 +10,11 @@ const NAVBAR_CSS: Asset = asset!("/assets/styling/navbar.css");
 /// routes will be rendered under the outlet inside this component
 #[component]
 pub fn Navbar() -> Element {
+    let authenticated = use_server_future(|| async { auth::assert_authenticated().await })?;
+    if authenticated() != Some(Ok(())) {
+        return rsx! {};
+    }
+
     rsx! {
         document::Link { rel: "stylesheet", href: NAVBAR_CSS }
 
