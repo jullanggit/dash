@@ -756,3 +756,13 @@ pub async fn playback_selection(selection: PlaybackSelection) -> Result<()> {
 
     Ok(())
 }
+
+#[server]
+pub async fn playback_rating_cutoff(rating_cutoff: f32) -> Result<()> {
+    crate::assert_authenticated!();
+    let mut option = PLAYBACK_OPTIONS.in_mem_cache.write().await;
+    let options = option.get_or_insert_with(PlaybackOptions::default);
+    options.rating_cutoff = rating_cutoff.clamp(0.0, 5.0);
+
+    Ok(())
+}

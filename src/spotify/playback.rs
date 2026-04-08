@@ -11,6 +11,8 @@ use time::{Date, Time};
 
 #[cfg(feature = "server")]
 use crate::spotify::analyze::Analyzation;
+#[cfg(test)]
+use crate::spotify::analyze::DEFAULT_RATING;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PlaybackSelection {
@@ -20,10 +22,21 @@ pub enum PlaybackSelection {
     UnratedOnly,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlaybackOptions {
     pub weighted_playback_playlists: HashSet<PlaylistId<'static>>,
     pub selection: PlaybackSelection,
+    pub rating_cutoff: f32,
+}
+
+impl Default for PlaybackOptions {
+    fn default() -> Self {
+        Self {
+            weighted_playback_playlists: HashSet::new(),
+            selection: PlaybackSelection::Everything,
+            rating_cutoff: 0.0,
+        }
+    }
 }
 
 impl PlaybackOptions {
@@ -147,11 +160,13 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
         if let Some(tracks) = tracks {
             let ratings = ratings_server().await;
             let recently_played = recently_played_server().await;
+            let options = playback_options_server().await;
             let track = choose_random_song(
                 &tracks,
                 &ratings,
                 &recently_played,
-                playback_options_server().await.selection,
+                options.selection,
+                options.rating_cutoff,
             );
 
             if let Some(track) = track {
@@ -172,6 +187,7 @@ fn choose_random_song(
     ratings: &Analyzation,
     recently_played: &[PlayHistory],
     selection: PlaybackSelection,
+    rating_cutoff: f32,
 ) -> Option<TrackId<'static>> {
     use rand::{RngExt, rng};
 
@@ -182,6 +198,10 @@ fn choose_random_song(
                 .tracks
                 .iter()
                 .any(|(rated_track, _)| rated_track.id.as_ref() == Some(track));
+            let rating = ratings.rating(track.as_ref().clone());
+            if rating < rating_cutoff {
+                return false;
+            }
             match selection {
                 PlaybackSelection::Everything => true,
                 PlaybackSelection::RatedOnly => is_rated,
@@ -280,7 +300,8 @@ mod tests {
             ..Analyzation::default()
         };
 
-        let selected = choose_random_song(&tracks, &ratings, &[], PlaybackSelection::RatedOnly);
+        let selected =
+            choose_random_song(&tracks, &ratings, &[], PlaybackSelection::RatedOnly, 0.0);
 
         assert_eq!(selected, Some(rated));
     }
@@ -295,6 +316,7 @@ mod tests {
             &Analyzation::default(),
             &[] as &[PlayHistory],
             PlaybackSelection::RatedOnly,
+            0.0,
         );
 
         assert_eq!(selected, None);
@@ -324,8 +346,25 @@ mod tests {
             &ratings,
             &[] as &[PlayHistory],
             PlaybackSelection::UnratedOnly,
+            0.0,
         );
 
         assert_eq!(selected, Some(unrated));
+    }
+
+    #[test]
+    fn choose_random_song_applies_cutoff_to_default_rating_for_unrated_tracks() {
+        let unrated = track("1301WleyT98MSxVHPZCA6M");
+        let tracks = [unrated];
+
+        let selected = choose_random_song(
+            &tracks,
+            &Analyzation::default(),
+            &[] as &[PlayHistory],
+            PlaybackSelection::Everything,
+            DEFAULT_RATING + 0.1,
+        );
+
+        assert_eq!(selected, None);
     }
 }
