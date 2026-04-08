@@ -3,6 +3,7 @@ use crate::{
     spotify::{
         analyze::{Analyzation, RATING_OVERWRITE_WINDOW, TrackAnalyzation},
         caching::use_server_fn,
+        playback::PlaybackOptions,
     },
 };
 #[cfg(feature = "server")]
@@ -726,21 +727,21 @@ caching_hashmap!(
 
 // (mis)use caching macro to periodically serialize and automatically deserialize
 caching!(
-    weighted_playback_enabled,
-    HashSet<PlaylistId<'static>>,
+    playback_options,
+    PlaybackOptions,
     |_, previous| async move { Ok(previous.unwrap_or_default()) },
-    WEIGHTED_PLAYBACK_ENABLED,
+    PLAYBACK_OPTIONS,
     Duration::weeks(52)
 );
 #[server]
 pub async fn weighted_playback(playlist: PlaylistId<'static>, enabled: bool) -> Result<()> {
     crate::assert_authenticated!();
-    let mut option = WEIGHTED_PLAYBACK_ENABLED.in_mem_cache.write().await;
-    let set = option.get_or_insert_with(HashSet::new);
+    let mut option = PLAYBACK_OPTIONS.in_mem_cache.write().await;
+    let options = option.get_or_insert_with(PlaybackOptions::default);
     if enabled {
-        set.insert(playlist);
+        options.weighted_playback_playlists.insert(playlist);
     } else {
-        set.remove(&playlist);
+        options.weighted_playback_playlists.remove(&playlist);
     }
 
     Ok(())

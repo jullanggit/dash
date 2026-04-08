@@ -14,7 +14,7 @@ pub fn Login() -> Element {
                 onsubmit: move |event| {
                     event.prevent_default();
                     let submitted_password = password();
-                    let nav = navigator.clone();
+                    let nav = navigator;
                     async move {
                         match auth::login(submitted_password).await {
                             Ok(()) => {

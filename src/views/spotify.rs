@@ -1,12 +1,14 @@
 use crate::{
     assert_authenticated,
     spotify::{
-        add_rating, caching::use_server_fn, genres, rating_if_recently_rated as fetch_rating,
-        use_playback_state,
+        add_rating, caching::use_server_fn, genres, playback_options,
+        rating_if_recently_rated as fetch_rating, use_playback_state, weighted_playback,
     },
 };
 use dioxus::prelude::*;
-use rspotify_model::{CurrentPlaybackContext, FullTrack, PlayableItem, TrackId};
+use rspotify_model::{
+    Context, CurrentPlaybackContext, FullTrack, PlayableItem, PlaylistId, TrackId, Type,
+};
 use time::Duration;
 
 const MOBILE_BREAKPOINT_PX: u16 = 768;
@@ -60,6 +62,7 @@ fn Player(
     playback_state: Signal<Option<Option<CurrentPlaybackContext>>>,
     mobile_mode: bool,
 ) -> Element {
+    let playback_options = use_resource(|| async move { playback_options().await });
     let track_id = playback_state.map(move |state| match state {
         Some(Some(CurrentPlaybackContext {
             item: Some(PlayableItem::Track(FullTrack { id, .. })),
@@ -119,6 +122,14 @@ fn Player(
                 None
             }
         });
+    let current_playlist_id = state.and_then(|state| match &state.context {
+        Some(Context {
+            _type: Type::Playlist,
+            uri,
+            ..
+        }) => PlaylistId::from_id(uri).ok().map(PlaylistId::into_static),
+        _ => None,
+    });
     let image = track.and_then(|track| track.album.images.first());
     let current_track_id = track_id.read().clone();
     let pending_rating_value =
@@ -161,12 +172,31 @@ fn Player(
                         flex: 0 1 640px;
                         width: min(100%, 640px);
                     ",
-                    if let Some(image) = image {
-                        img {
-                            src: "{image.url}",
-                            width: image.width,
-                            height: image.height,
-                            style: "max-width: 100%; height: auto;",
+                    if mobile_mode {
+                        if let Some(image) = image {
+                            img {
+                                src: "{image.url}",
+                                width: image.width,
+                                height: image.height,
+                                style: "max-width: 100%; height: auto;",
+                            }
+                        }
+                    } else if let Some(image) = image {
+                        div { style: "
+                                display: grid;
+                                grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+                                align-items: center;
+                                width: min(100vw, 1200px);
+                                gap: 24px;
+                            ",
+                            div {}
+                            img {
+                                src: "{image.url}",
+                                width: image.width,
+                                height: image.height,
+                                style: "max-width: min(100%, 640px); height: auto; justify-self: center;",
+                            }
+                            PlaybackOptionsPanel { current_playlist_id, playback_options }
                         }
                     }
                     div { style: "width: 100%;",
@@ -364,15 +394,15 @@ fn HoverSlider(
                 div {
                     style: format!(
                         "
-                                                            position: absolute;
-                                                            top: 0;
-                                                            bottom: 0;
-                                                            left: {}px;
-                                                            width: 2px;
-                                                            background: white;
-                                                            transform: translateX(-50%);
-                                                            pointer-events: none;
-                                                        ",
+                                                                                                            position: absolute;
+                                                                                                            top: 0;
+                                                                                                            bottom: 0;
+                                                                                                            left: {}px;
+                                                                                                            width: 2px;
+                                                                                                            background: white;
+                                                                                                            transform: translateX(-50%);
+                                                                                                            pointer-events: none;
+                                                                                                        ",
                         (displayed_rating / 5.0) * *width.read(),
                     ),
                 }
@@ -394,6 +424,109 @@ fn HoverSlider(
                     on_select.call(rating);
                 },
                 "{submit_label}"
+            }
+        }
+    }
+}
+
+#[component]
+fn PlaybackOptionsPanel(
+    current_playlist_id: Option<PlaylistId<'static>>,
+    playback_options: Resource<Result<crate::spotify::playback::PlaybackOptions>>,
+) -> Element {
+    let is_enabled = match &*playback_options.read() {
+        Some(Ok(options)) => current_playlist_id
+            .as_ref()
+            .is_some_and(|playlist_id| options.weighted_playback_enabled(playlist_id)),
+        _ => false,
+    };
+    let is_pending = playback_options.pending();
+    let helper_text = match current_playlist_id {
+        Some(_) => {
+            if is_pending {
+                "Saving playback options..."
+            } else {
+                "Bias queueing toward higher-rated tracks in this playlist."
+            }
+        }
+        None => "Weighted playback is only available while listening to a playlist.",
+    };
+
+    rsx! {
+        div { style: "
+                justify-self: start;
+                width: min(100%, 320px);
+                padding: 20px;
+                border: 1px solid #2f2f2f;
+                border-radius: 16px;
+                background: rgba(18, 18, 18, 0.92);
+            ",
+            h3 { style: "margin-bottom: 16px;", "Playback Options" }
+            div { style: "
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 16px;
+                ",
+                div {
+                    p { style: "font-weight: 600; margin: 0;", "Weighted Playback" }
+                    p { style: "font-size: 0.9rem; color: #b3b3b3; margin: 6px 0 0;",
+                        "{helper_text}"
+                    }
+                }
+                button {
+                    role: "switch",
+                    "aria-checked": "{is_enabled}",
+                    disabled: current_playlist_id.is_none() || is_pending,
+                    style: format!(
+                        "
+                                                                            position: relative;
+                                                                            width: 52px;
+                                                                            height: 30px;
+                                                                            border-radius: 999px;
+                                                                            border: 0;
+                                                                            padding: 0;
+                                                                            background: {};
+                                                                            opacity: {};
+                                                                            cursor: {};
+                                                                        ",
+                        if is_enabled { "#1db954" } else { "#4b5563" },
+                        if current_playlist_id.is_some() && !is_pending { "1" } else { "0.55" },
+                        if current_playlist_id.is_some() && !is_pending {
+                            "pointer"
+                        } else {
+                            "not-allowed"
+                        },
+                    ),
+                    onclick: move |_| {
+                        let playlist_id = current_playlist_id.clone();
+                        async move {
+                            let Some(playlist_id) = playlist_id else {
+                                return;
+                            };
+                            if let Err(error) = weighted_playback(playlist_id, !is_enabled).await {
+                                error!("Failed to update playback options: {error}");
+                            }
+                            playback_options.restart();
+                        }
+                    },
+                    span {
+                        style: format!(
+                            "
+                                                                                            position: absolute;
+                                                                                            top: 3px;
+                                                                                            left: 3px;
+                                                                                            width: 24px;
+                                                                                            height: 24px;
+                                                                                            border-radius: 50%;
+                                                                                            background: white;
+                                                                                            transform: translateX({});
+                                                                                            transition: transform 120ms ease;
+                                                                                        ",
+                            if is_enabled { "22px" } else { "0" },
+                        ),
+                    }
+                }
             }
         }
     }

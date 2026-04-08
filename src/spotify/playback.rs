@@ -2,11 +2,26 @@ use dioxus::prelude::*;
 #[cfg(feature = "server")]
 use rspotify_model::PlayHistory;
 use rspotify_model::{Context, CurrentPlaybackContext, PlaylistId, TrackId, Type};
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::time::Duration;
-use time::{Date, Time, UtcDateTime};
+use time::UtcDateTime;
+#[cfg(test)]
+use time::{Date, Time};
 
 #[cfg(feature = "server")]
 use crate::spotify::analyze::Analyzation;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PlaybackOptions {
+    pub weighted_playback_playlists: HashSet<PlaylistId<'static>>,
+}
+
+impl PlaybackOptions {
+    pub fn weighted_playback_enabled(&self, playlist: &PlaylistId<'static>) -> bool {
+        self.weighted_playback_playlists.contains(playlist)
+    }
+}
 
 #[cfg(feature = "server")]
 pub async fn handle_weighted_playback() -> ! {
@@ -20,28 +35,24 @@ pub async fn handle_weighted_playback() -> ! {
 
 // TODO:
 // - only add a song to queue if it is empty
-// - store user settings for which playlists should be affected
 #[cfg(feature = "server")]
 async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) {
     use crate::spotify::recently_played_server;
     use crate::spotify::{
-        add_to_queue, playback_state_server, playlist_tracks_server, queue_server, ratings_server,
-        retrying, saved_tracks_server, spotify, weighted_playback_enabled_server,
+        add_to_queue, playback_options_server, playback_state_server, playlist_tracks_server,
+        queue_server, ratings_server, saved_tracks_server, spotify,
     };
 
-    use rspotify::prelude::OAuthClient;
     use rspotify_model::{FullTrack, PlayableItem};
 
-    let spotify = spotify().await.clone();
+    let _spotify = spotify().await.clone();
 
     let queue = queue_server().await;
     let num_in_queue = |track_id| {
         queue
             .iter()
             .filter(|item| {
-                if let PlayableItem::Track(FullTrack {
-                    id: Some(id), name, ..
-                }) = item
+                if let PlayableItem::Track(FullTrack { id: Some(id), .. }) = item
                     && *id == track_id
                 {
                     true
@@ -54,8 +65,6 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
 
     // only queue a song if the last one is no longer in the queue
     if let Some((track_id, times)) = last_queued {
-        use rspotify_model::PlayableItem;
-
         // we have to guard against the song already having been in the queue before us queuing
         if num_in_queue(track_id.clone()) >= *times {
             return;
@@ -69,11 +78,14 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
         ..
     }) = context
     {
-        let tracks = match _type {
+        let tracks: Option<Vec<TrackId<'static>>> = match _type {
             Type::Playlist => match PlaylistId::from_id(&uri) {
                 Ok(id) => {
                     let id = id.into_static();
-                    if weighted_playback_enabled_server().await.contains(&id) {
+                    if playback_options_server()
+                        .await
+                        .weighted_playback_enabled(&id)
+                    {
                         Some(
                             playlist_tracks_server(id)
                                 .await
@@ -86,7 +98,7 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
                     }
                 }
                 Err(e) => {
-                    warn!("_type = playlist uri should be a playlist id: {uri}");
+                    warn!("_type = playlist uri ({uri}) should be a playlist id: {e}");
                     None
                 }
             },
@@ -172,7 +184,7 @@ fn test_weight_decay() {
     }
 }
 
-// TODO: add more parameters, i.e. recently played songs, playlist membership etc.
+// TODO: add more parameters, i.e. playlist membership etc.
 pub fn weight(rating: f32) -> f32 {
     2f32.powf(rating)
 }
