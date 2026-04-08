@@ -70,22 +70,26 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
     }) = context
     {
         let tracks = match _type {
-            Type::Playlist => {
-                let id = PlaylistId::from_id(uri)
-                    .expect("_type = playlist uri should be a playlist id")
-                    .into_static();
-                if weighted_playback_enabled_server().await.contains(&id) {
-                    Some(
-                        playlist_tracks_server(id)
-                            .await
-                            .iter()
-                            .filter_map(|track| track.id.clone().map(TrackId::into_static))
-                            .collect::<Vec<_>>(),
-                    )
-                } else {
+            Type::Playlist => match PlaylistId::from_id(&uri) {
+                Ok(id) => {
+                    let id = id.into_static();
+                    if weighted_playback_enabled_server().await.contains(&id) {
+                        Some(
+                            playlist_tracks_server(id)
+                                .await
+                                .iter()
+                                .filter_map(|track| track.id.clone().map(TrackId::into_static))
+                                .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        None
+                    }
+                }
+                Err(e) => {
+                    warn!("_type = playlist uri should be a playlist id: {uri}");
                     None
                 }
-            }
+            },
             Type::Collection => Some(saved_tracks_server().await.into_iter().collect::<Vec<_>>()),
             _ => None,
         };
