@@ -12,14 +12,52 @@ use time::{Date, Time};
 #[cfg(feature = "server")]
 use crate::spotify::analyze::Analyzation;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PlaybackSelection {
+    #[default]
+    Everything,
+    RatedOnly,
+    UnratedOnly,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PlaybackOptions {
     pub weighted_playback_playlists: HashSet<PlaylistId<'static>>,
+    pub selection: PlaybackSelection,
 }
 
 impl PlaybackOptions {
     pub fn weighted_playback_enabled(&self, playlist: &PlaylistId<'static>) -> bool {
         self.weighted_playback_playlists.contains(playlist)
+    }
+}
+
+impl PlaybackSelection {
+    pub const ALL: [Self; 3] = [Self::Everything, Self::RatedOnly, Self::UnratedOnly];
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::Everything => "everything",
+            Self::RatedOnly => "rated-only",
+            Self::UnratedOnly => "unrated-only",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Everything => "Everything",
+            Self::RatedOnly => "Rated Only",
+            Self::UnratedOnly => "Unrated Only",
+        }
+    }
+
+    pub fn from_value(value: &str) -> Option<Self> {
+        Some(match value {
+            "everything" => Self::Everything,
+            "rated-only" => Self::RatedOnly,
+            "unrated-only" => Self::UnratedOnly,
+            _ => return None,
+        })
     }
 }
 
@@ -109,7 +147,12 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
         if let Some(tracks) = tracks {
             let ratings = ratings_server().await;
             let recently_played = recently_played_server().await;
-            let track = choose_random_song(&tracks, &ratings, &recently_played);
+            let track = choose_random_song(
+                &tracks,
+                &ratings,
+                &recently_played,
+                playback_options_server().await.selection,
+            );
 
             if let Some(track) = track {
                 let res = add_to_queue(track.clone()).await;
@@ -128,14 +171,33 @@ fn choose_random_song(
     tracks: &[TrackId<'static>],
     ratings: &Analyzation,
     recently_played: &[PlayHistory],
+    selection: PlaybackSelection,
 ) -> Option<TrackId<'static>> {
     use rand::{RngExt, rng};
+
+    let tracks = tracks
+        .iter()
+        .filter(|track| {
+            let is_rated = ratings
+                .tracks
+                .iter()
+                .any(|(rated_track, _)| rated_track.id.as_ref() == Some(track));
+            match selection {
+                PlaybackSelection::Everything => true,
+                PlaybackSelection::RatedOnly => is_rated,
+                PlaybackSelection::UnratedOnly => !is_rated,
+            }
+        })
+        .collect::<Vec<_>>();
+    if tracks.is_empty() {
+        return None;
+    }
 
     let now = UtcDateTime::now();
     let weights = tracks.iter().map(|track| {
         let recently_played_multiplier = recently_played
             .iter()
-            .find(|recent_track| recent_track.track.id == Some(track.clone()))
+            .find(|recent_track| recent_track.track.id.as_ref() == Some(*track))
             .map(|recent_track| {
                 weight_decay(
                     now,
@@ -143,7 +205,7 @@ fn choose_random_song(
                 )
             })
             .unwrap_or(1.);
-        weight(ratings.rating(track.as_ref())) * recently_played_multiplier
+        weight(ratings.rating(track.as_ref().clone())) * recently_played_multiplier
     });
 
     let total_weight: f32 = weights.clone().sum();
@@ -156,7 +218,7 @@ fn choose_random_song(
             value -= weight;
             value <= 0.
         })
-        .map(|(track, _)| track.clone())
+        .map(|(track, _)| (*track).clone())
 }
 
 pub fn weight_decay(now: UtcDateTime, then: UtcDateTime) -> f32 {
@@ -187,4 +249,83 @@ fn test_weight_decay() {
 // TODO: add more parameters, i.e. playlist membership etc.
 pub fn weight(rating: f32) -> f32 {
     2f32.powf(rating)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PlaybackSelection, choose_random_song};
+    use crate::spotify::analyze::{Analyzation, TrackAnalyzation};
+    use rspotify_model::{FullTrack, Id, PlayHistory, TrackId};
+
+    fn track(id: &'static str) -> TrackId<'static> {
+        TrackId::from_id(id).unwrap().into_static()
+    }
+
+    #[test]
+    fn choose_random_song_filters_to_rated_tracks() {
+        let rated = track("4uLU6hMCjMI75M1A2tKUQC");
+        let unrated = track("1301WleyT98MSxVHPZCA6M");
+        let tracks = [rated.clone(), unrated];
+        let ratings = Analyzation {
+            tracks: vec![(
+                FullTrack {
+                    id: Some(rated.clone()),
+                    ..FullTrack::default()
+                },
+                TrackAnalyzation {
+                    canonical_rating: 4.0,
+                    ..TrackAnalyzation::default()
+                },
+            )],
+            ..Analyzation::default()
+        };
+
+        let selected = choose_random_song(&tracks, &ratings, &[], PlaybackSelection::RatedOnly);
+
+        assert_eq!(selected, Some(rated));
+    }
+
+    #[test]
+    fn choose_random_song_returns_none_when_filter_excludes_everything() {
+        let unrated = track("1301WleyT98MSxVHPZCA6M");
+        let tracks = [unrated];
+
+        let selected = choose_random_song(
+            &tracks,
+            &Analyzation::default(),
+            &[] as &[PlayHistory],
+            PlaybackSelection::RatedOnly,
+        );
+
+        assert_eq!(selected, None);
+    }
+
+    #[test]
+    fn choose_random_song_filters_to_unrated_tracks() {
+        let rated = track("4uLU6hMCjMI75M1A2tKUQC");
+        let unrated = track("1301WleyT98MSxVHPZCA6M");
+        let tracks = [rated.clone(), unrated.clone()];
+        let ratings = Analyzation {
+            tracks: vec![(
+                FullTrack {
+                    id: Some(rated),
+                    ..FullTrack::default()
+                },
+                TrackAnalyzation {
+                    canonical_rating: 4.0,
+                    ..TrackAnalyzation::default()
+                },
+            )],
+            ..Analyzation::default()
+        };
+
+        let selected = choose_random_song(
+            &tracks,
+            &ratings,
+            &[] as &[PlayHistory],
+            PlaybackSelection::UnratedOnly,
+        );
+
+        assert_eq!(selected, Some(unrated));
+    }
 }

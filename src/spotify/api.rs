@@ -3,7 +3,7 @@ use crate::{
     spotify::{
         analyze::{Analyzation, RATING_OVERWRITE_WINDOW, TrackAnalyzation},
         caching::use_server_fn,
-        playback::PlaybackOptions,
+        playback::{PlaybackOptions, PlaybackSelection},
     },
 };
 #[cfg(feature = "server")]
@@ -743,6 +743,16 @@ pub async fn weighted_playback(playlist: PlaylistId<'static>, enabled: bool) -> 
     } else {
         options.weighted_playback_playlists.remove(&playlist);
     }
+
+    Ok(())
+}
+
+#[server]
+pub async fn playback_selection(selection: PlaybackSelection) -> Result<()> {
+    crate::assert_authenticated!();
+    let mut option = PLAYBACK_OPTIONS.in_mem_cache.write().await;
+    let options = option.get_or_insert_with(PlaybackOptions::default);
+    options.selection = selection;
 
     Ok(())
 }

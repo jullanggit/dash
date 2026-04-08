@@ -1,7 +1,7 @@
 use crate::{
     assert_authenticated,
     spotify::{
-        add_rating, caching::use_server_fn, genres, playback_options,
+        add_rating, caching::use_server_fn, genres, playback_options, playback_selection,
         rating_if_recently_rated as fetch_rating, use_playback_state, weighted_playback,
     },
 };
@@ -10,6 +10,8 @@ use rspotify_model::{
     Context, CurrentPlaybackContext, FullTrack, PlayableItem, PlaylistId, TrackId, Type,
 };
 use time::Duration;
+
+use crate::spotify::playback::PlaybackSelection;
 
 const MOBILE_BREAKPOINT_PX: u16 = 768;
 
@@ -394,15 +396,15 @@ fn HoverSlider(
                 div {
                     style: format!(
                         "
-                                                                                                                                                            position: absolute;
-                                                                                                                                                            top: 0;
-                                                                                                                                                            bottom: 0;
-                                                                                                                                                            left: {}px;
-                                                                                                                                                            width: 2px;
-                                                                                                                                                            background: white;
-                                                                                                                                                            transform: translateX(-50%);
-                                                                                                                                                            pointer-events: none;
-                                                                                                                                                        ",
+                                                                                                                                                                                                            position: absolute;
+                                                                                                                                                                                                            top: 0;
+                                                                                                                                                                                                            bottom: 0;
+                                                                                                                                                                                                            left: {}px;
+                                                                                                                                                                                                            width: 2px;
+                                                                                                                                                                                                            background: white;
+                                                                                                                                                                                                            transform: translateX(-50%);
+                                                                                                                                                                                                            pointer-events: none;
+                                                                                                                                                                                                        ",
                         (displayed_rating / 5.0) * *width.read(),
                     ),
                 }
@@ -434,23 +436,16 @@ fn PlaybackOptionsPanel(
     current_playlist_id: Option<PlaylistId<'static>>,
     playback_options: Resource<Result<crate::spotify::playback::PlaybackOptions>>,
 ) -> Element {
-    let is_enabled = match &*playback_options.read() {
-        Some(Ok(options)) => current_playlist_id
-            .as_ref()
-            .is_some_and(|playlist_id| options.weighted_playback_enabled(playlist_id)),
-        _ => false,
+    let (is_enabled, selection) = match &*playback_options.read() {
+        Some(Ok(options)) => (
+            current_playlist_id
+                .as_ref()
+                .is_some_and(|playlist_id| options.weighted_playback_enabled(playlist_id)),
+            options.selection,
+        ),
+        _ => (false, PlaybackSelection::Everything),
     };
     let is_pending = playback_options.pending();
-    let helper_text = match current_playlist_id {
-        Some(_) => {
-            if is_pending {
-                "Saving playback options..."
-            } else {
-                "Bias queueing toward higher-rated tracks in this playlist."
-            }
-        }
-        None => "Weighted playback is only available while listening to a playlist.",
-    };
 
     rsx! {
         div { style: "
@@ -470,9 +465,6 @@ fn PlaybackOptionsPanel(
                 ",
                 div {
                     p { style: "font-weight: 600; margin: 0;", "Weighted Playback" }
-                    p { style: "font-size: 0.9rem; color: #b3b3b3; margin: 6px 0 0;",
-                        "{helper_text}"
-                    }
                 }
                 button {
                     role: "switch",
@@ -480,16 +472,16 @@ fn PlaybackOptionsPanel(
                     disabled: current_playlist_id.is_none() || is_pending,
                     style: format!(
                         "
-                                                                                                                            position: relative;
-                                                                                                                            width: 52px;
-                                                                                                                            height: 30px;
-                                                                                                                            border-radius: 999px;
-                                                                                                                            border: 0;
-                                                                                                                            padding: 0;
-                                                                                                                            background: {};
-                                                                                                                            opacity: {};
-                                                                                                                            cursor: {};
-                                                                                                                        ",
+                                                                                                                                                                            position: relative;
+                                                                                                                                                                            width: 52px;
+                                                                                                                                                                            height: 30px;
+                                                                                                                                                                            border-radius: 999px;
+                                                                                                                                                                            border: 0;
+                                                                                                                                                                            padding: 0;
+                                                                                                                                                                            background: {};
+                                                                                                                                                                            opacity: {};
+                                                                                                                                                                            cursor: {};
+                                                                                                                                                                        ",
                         if is_enabled { "#1db954" } else { "#4b5563" },
                         if current_playlist_id.is_some() && !is_pending { "1" } else { "0.55" },
                         if current_playlist_id.is_some() && !is_pending {
@@ -513,18 +505,64 @@ fn PlaybackOptionsPanel(
                     span {
                         style: format!(
                             "
-                                                                                                                                                        position: absolute;
-                                                                                                                                                        top: 3px;
-                                                                                                                                                        left: 3px;
-                                                                                                                                                        width: 24px;
-                                                                                                                                                        height: 24px;
-                                                                                                                                                        border-radius: 50%;
-                                                                                                                                                        background: white;
-                                                                                                                                                        transform: translateX({});
-                                                                                                                                                        transition: transform 120ms ease;
-                                                                                                                                                    ",
+                                                                                                                                                                                                                    position: absolute;
+                                                                                                                                                                                                                    top: 3px;
+                                                                                                                                                                                                                    left: 3px;
+                                                                                                                                                                                                                    width: 24px;
+                                                                                                                                                                                                                    height: 24px;
+                                                                                                                                                                                                                    border-radius: 50%;
+                                                                                                                                                                                                                    background: white;
+                                                                                                                                                                                                                    transform: translateX({});
+                                                                                                                                                                                                                    transition: transform 120ms ease;
+                                                                                                                                                                                                                ",
                             if is_enabled { "22px" } else { "0" },
                         ),
+                    }
+                }
+            }
+            div { style: "
+                    margin-top: 16px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 16px;
+                ",
+                label {
+                    r#for: "playback-selection",
+                    style: "font-weight: 600; white-space: nowrap;",
+                    "Play"
+                }
+                select {
+                    id: "playback-selection",
+                    disabled: is_pending,
+                    value: selection.value(),
+                    style: "
+                        flex: 1;
+                        min-width: 0;
+                        padding: 10px 12px;
+                        border-radius: 10px;
+                        border: 1px solid #2f2f2f;
+                        background: #161616;
+                        color: #f5f5f5;
+                    ",
+                    onchange: move |event| {
+                        let value = event.value();
+                        async move {
+                            let Some(selection) = PlaybackSelection::from_value(&value) else {
+                                return;
+                            };
+                            if let Err(error) = playback_selection(selection).await {
+                                error!("Failed to update playback selection: {error}");
+                            }
+                            playback_options.restart();
+                        }
+                    },
+                    for selection_option in PlaybackSelection::ALL {
+                        option {
+                            value: selection_option.value(),
+                            selected: selection_option == selection,
+                            "{selection_option.label()}"
+                        }
                     }
                 }
             }
