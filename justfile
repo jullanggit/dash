@@ -5,7 +5,7 @@ check:
 
 # Serve website
 serve:
-	dx serve --web
+	dx serve --no-default-features --web
 
 # Format code
 fmt:

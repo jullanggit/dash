@@ -11,7 +11,9 @@
 mod home;
 pub use home::Home;
 
+#[cfg(feature = "login")]
 mod login;
+#[cfg(feature = "login")]
 pub use login::Login;
 
 mod navbar;

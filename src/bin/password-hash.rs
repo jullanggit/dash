@@ -1,5 +1,6 @@
 use std::io::stdin;
 
+#[cfg(feature = "login")]
 use argon2::{
     Argon2,
     password_hash::{PasswordHasher, SaltString},
@@ -8,7 +9,7 @@ use argon2::{
 #[cfg(feature = "bin")]
 use rand_core::OsRng;
 
-#[cfg(feature = "bin")]
+#[cfg(all(feature = "bin", feature = "login"))]
 fn main() {
     let mut password = String::new();
     stdin().read_line(&mut password).unwrap();
@@ -21,5 +22,5 @@ fn main() {
     println!("{hash}");
 }
 
-#[cfg(not(feature = "bin"))]
+#[cfg(not(all(feature = "bin", feature = "login")))]
 fn main() {}

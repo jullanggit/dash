@@ -5,7 +5,9 @@
 // The dioxus prelude contains a ton of common items used in dioxus apps. It's a good idea to import wherever you
 // need dioxus
 use dioxus::prelude::*;
-use views::{Home, Login, Navbar, Spotify};
+#[cfg(feature = "login")]
+use views::Login;
+use views::{Home, Navbar, Spotify};
 
 /// Define a components module that contains all shared components for our app.
 mod auth;
@@ -23,6 +25,7 @@ mod views;
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
+    #[cfg(feature = "login")]
     #[route("/login")]
     Login {},
     // The layout attribute defines a wrapper for all routes under the layout. Layouts are great for wrapping
