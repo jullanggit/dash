@@ -731,8 +731,9 @@ caching!(
     PlaybackOptions,
     |_, previous| async move { Ok(previous.unwrap_or_default()) },
     PLAYBACK_OPTIONS,
-    Duration::weeks(52)
+    Duration::seconds(5)
 );
+
 #[server]
 pub async fn weighted_playback(playlist: PlaylistId<'static>, enabled: bool) -> Result<()> {
     crate::assert_authenticated!();
