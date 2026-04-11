@@ -115,8 +115,10 @@ caching!(
             if let Ok(rating) = playlist.name.parse::<f32>()
                 && (0.0..=5.0).contains(&rating)
             {
-                if playlists.iter().any(|(s_rating, _)| *s_rating == rating) {
-                    return Err(anyhow::anyhow!("Rating folder {rating} already present"));
+                if playlists.iter().any(|(s_rating, s_playlist)| {
+                    *s_rating == rating && s_playlist.id != playlist.id
+                }) {
+                    return Err(anyhow::anyhow!("Duplicate rating folder {rating}"));
                 } else {
                     playlists.push((rating, playlist.clone()))
                 };
