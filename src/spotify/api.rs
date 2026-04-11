@@ -95,7 +95,7 @@ caching!(
     Vec<(f32, SimplifiedPlaylist)>,
     |_, _| async move {
         let spotify = spotify().await;
-        let mut playlists = Vec::new();
+        let mut playlists: Vec<(f32, SimplifiedPlaylist)> = Vec::new();
 
         trace!("Getting rating playlists");
 
