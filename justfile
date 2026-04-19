@@ -1,7 +1,7 @@
 # Run checks for both server and web
 check:
-    cargo clippy --features server -Zno-index-update
-    cargo clippy --features web -Zno-index-update
+	cargo clippy --features server -Zno-index-update
+	cargo clippy --features web -Zno-index-update
 
 # Serve website
 serve:
@@ -12,3 +12,6 @@ fmt:
 	cargo fmt
 	dx fmt
 	tombi fmt Cargo.toml
+
+bundle:
+	RUSTFLAGS="" dx bundle --web --release

@@ -397,15 +397,15 @@ fn HoverSlider(
                 div {
                     style: format!(
                         "
-                                                                                                                                                                                                                                            position: absolute;
-                                                                                                                                                                                                                                            top: 0;
-                                                                                                                                                                                                                                            bottom: 0;
-                                                                                                                                                                                                                                            left: {}px;
-                                                                                                                                                                                                                                            width: 2px;
-                                                                                                                                                                                                                                            background: white;
-                                                                                                                                                                                                                                            transform: translateX(-50%);
-                                                                                                                                                                                                                                            pointer-events: none;
-                                                                                                                                                                                                                                        ",
+                                                                                                                                                                                                                                                            position: absolute;
+                                                                                                                                                                                                                                                            top: 0;
+                                                                                                                                                                                                                                                            bottom: 0;
+                                                                                                                                                                                                                                                            left: {}px;
+                                                                                                                                                                                                                                                            width: 2px;
+                                                                                                                                                                                                                                                            background: white;
+                                                                                                                                                                                                                                                            transform: translateX(-50%);
+                                                                                                                                                                                                                                                            pointer-events: none;
+                                                                                                                                                                                                                                                        ",
                         (displayed_rating / 5.0) * *width.read(),
                     ),
                 }
@@ -473,16 +473,16 @@ fn PlaybackOptionsPanel(
                     disabled: current_playlist_id.is_none() || is_pending,
                     style: format!(
                         "
-                            position: relative;
-                            width: 52px;
-                            height: 30px;
-                            border-radius: 999px;
-                            border: 0;
-                            padding: 0;
-                            background: {};
-                            opacity: {};
-                            cursor: {};
-                        ",
+                                            position: relative;
+                                            width: 52px;
+                                            height: 30px;
+                                            border-radius: 999px;
+                                            border: 0;
+                                            padding: 0;
+                                            background: {};
+                                            opacity: {};
+                                            cursor: {};
+                                        ",
                         if is_enabled { "#1db954" } else { "#4b5563" },
                         if current_playlist_id.is_some() && !is_pending { "1" } else { "0.55" },
                         if current_playlist_id.is_some() && !is_pending {
@@ -506,16 +506,16 @@ fn PlaybackOptionsPanel(
                     span {
                         style: format!(
                             "
-                                position: absolute;
-                                top: 3px;
-                                left: 3px;
-                                width: 24px;
-                                height: 24px;
-                                border-radius: 50%;
-                                background: white;
-                                transform: translateX({});
-                                transition: transform 120ms ease;
-                            ",
+                                                    position: absolute;
+                                                    top: 3px;
+                                                    left: 3px;
+                                                    width: 24px;
+                                                    height: 24px;
+                                                    border-radius: 50%;
+                                                    background: white;
+                                                    transform: translateX({});
+                                                    transition: transform 120ms ease;
+                                                ",
                             if is_enabled { "22px" } else { "0" },
                         ),
                     }
@@ -630,7 +630,7 @@ async fn charts() -> Result<Vec<String>> {
     use crate::spotify::{
         artist_proportions, average_rating_per_day, canonical_rating_correlations,
         canonical_rating_distribution, genre_proportions, num_ratings_history, ratings_server,
-        song_canonical_rating_histories,
+        song_canonical_rating_histories, song_proportions,
     };
     use charming::HtmlRenderer;
 
@@ -643,6 +643,7 @@ async fn charts() -> Result<Vec<String>> {
     Ok([
         genre_proportions,
         artist_proportions,
+        song_proportions,
         canonical_rating_distribution,
         num_ratings_history,
         song_canonical_rating_histories,

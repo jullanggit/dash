@@ -544,6 +544,49 @@ fn proportion_pie(center: &str, data: Vec<(f32, String)>, name: &str) -> Pie {
         .name(name)
 }
 
+fn proportions_with_scores(
+    counts: HashMap<String, (f32, u32)>,
+) -> (Vec<(f32, String)>, Vec<(f32, String)>, Vec<(f32, String)>) {
+    let cumulative_counts = counts
+        .clone()
+        .into_iter()
+        .map(|(name, (acc, _))| (acc, name))
+        .collect::<Vec<_>>();
+
+    let average_counts = counts
+        .into_iter()
+        .map(|(name, (acc, num))| (acc / num as f32, name))
+        .collect::<Vec<_>>();
+
+    let max = |collection: &[(f32, String)]| -> f32 {
+        collection
+            .iter()
+            .map(|(num, _)| *num)
+            .max_by(|a, b| a.total_cmp(b))
+            .unwrap_or(1.0)
+    };
+
+    let max_cumulative = max(&cumulative_counts);
+    let max_average = max(&average_counts);
+    let scores = cumulative_counts
+        .iter()
+        .zip(&average_counts)
+        .map(|((cumulative, name), (average, name2))| {
+            assert_eq!(name, name2);
+            (
+                *cumulative / max_cumulative + *average / max_average,
+                name.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    (
+        sort_and_limit(cumulative_counts),
+        sort_and_limit(average_counts),
+        sort_and_limit(scores),
+    )
+}
+
 pub fn genre_proportions(data: &Analyzation) -> Chart {
     let mut genre_counts: HashMap<String, (f32, u32)> = HashMap::new();
 
@@ -555,43 +598,8 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
         }
     }
 
-    let cumulative_genre_counts = genre_counts
-        .clone()
-        .into_iter()
-        .map(|(genre, (acc, _))| (acc, genre))
-        .collect::<Vec<_>>();
-
-    let average_genre_counts = genre_counts
-        .into_iter()
-        .map(|(genre, (acc, num))| (acc / num as f32, genre))
-        .collect::<Vec<_>>();
-
-    let max = |collection: &[(f32, String)]| -> f32 {
-        collection
-            .iter()
-            .map(|(num, _)| *num)
-            .max_by(|a, b| a.total_cmp(b))
-            .unwrap_or(1.0)
-    };
-
-    let max_cumulative = max(&cumulative_genre_counts);
-    let max_average = max(&average_genre_counts);
-    let genre_scores = cumulative_genre_counts
-        .iter()
-        .zip(&average_genre_counts)
-        .map(|((cumulative, genre), (average, genre2))| {
-            assert_eq!(genre, genre2);
-
-            (
-                *cumulative / max_cumulative + *average / max_average,
-                genre.clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    let cumulative_genre_counts = sort_and_limit(cumulative_genre_counts);
-    let average_genre_counts = sort_and_limit(average_genre_counts);
-    let genre_scores = sort_and_limit(genre_scores);
+    let (cumulative_genre_counts, average_genre_counts, genre_scores) =
+        proportions_with_scores(genre_counts);
 
     base_chart("Genres")
         .tooltip(Tooltip::new().trigger(Trigger::Item))
@@ -601,38 +609,43 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
 }
 
 pub fn artist_proportions(data: &Analyzation) -> Chart {
-    let mut artist_counts: HashMap<String, f32> = HashMap::new();
-    let mut song_ratings: HashMap<_, f32> = HashMap::new();
+    let mut artist_counts: HashMap<String, (f32, u32)> = HashMap::new();
 
     for (track, analyzation) in &data.tracks {
         let track_weight = weight(analyzation.canonical_rating);
-        song_ratings.insert(
-            (track.name.clone(), track.id.clone()),
-            weight(analyzation.canonical_rating),
-        );
 
         for artist in &track.artists {
-            *artist_counts.entry(artist.name.clone()).or_insert(0.0) += track_weight;
+            let (acc, num) = artist_counts.entry(artist.name.clone()).or_insert((0.0, 0));
+            *acc += track_weight;
+            *num += 1;
         }
     }
 
-    let cumulative_artist_counts = sort_and_limit(
-        artist_counts
-            .into_iter()
-            .map(|(artist, acc)| (acc, artist))
-            .collect(),
-    );
+    let (cumulative_artist_counts, average_artist_counts, artist_scores) =
+        proportions_with_scores(artist_counts);
+
+    base_chart("Artists")
+        .tooltip(Tooltip::new().trigger(Trigger::Item))
+        .series(proportion_pie(
+            "18%",
+            cumulative_artist_counts,
+            "Cumulative",
+        ))
+        .series(proportion_pie("50%", artist_scores, "Score"))
+        .series(proportion_pie("82%", average_artist_counts, "Average"))
+}
+
+pub fn song_proportions(data: &Analyzation) -> Chart {
     let song_ratings = sort_and_limit(
-        song_ratings
-            .into_iter()
-            .map(|((name, id), rating)| (rating, name))
+        data.tracks
+            .iter()
+            .map(|(track, analyzation)| (weight(analyzation.canonical_rating), track.name.clone()))
             .collect(),
     );
 
-    base_chart("Song Rating and Artist Cumulative Rating")
+    base_chart("Songs")
         .tooltip(Tooltip::new().trigger(Trigger::Item))
-        .series(proportion_pie("25%", song_ratings, "Songs"))
-        .series(proportion_pie("75%", cumulative_artist_counts, "Artists"))
+        .series(proportion_pie("50%", song_ratings, "Score"))
 }
 
 fn release_date_to_timestamp_millis(
