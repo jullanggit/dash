@@ -73,6 +73,7 @@ macro_rules! caching {
         /// Client function, returns a Signal that updates every interval (
         #[doc = stringify!($interval)]
         /// )
+        #[allow(unused)]
         pub fn ${ concat(use_, $fn_name) }() -> Signal<Option<$return>> {
             use_server_fn($fn_name, $interval)
         }
