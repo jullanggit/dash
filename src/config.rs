@@ -3,8 +3,6 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use time::{Duration, UtcDateTime};
-#[cfg(feature = "server")]
-use tokio::sync::{Mutex, RwLock};
 
 caching!(
     config,

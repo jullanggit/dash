@@ -1,9 +1,9 @@
 use crate::{
     assert_authenticated,
     spotify::{
-        add_rating, analyze::DEFAULT_RATING, caching::use_server_fn, genres, playback_options,
-        playback_rating_cutoff, playback_selection, rating_if_recently_rated as fetch_rating,
-        use_playback_state, weighted_playback,
+        add_rating, caching::use_server_fn, genres, playback_options, playback_rating_cutoff,
+        playback_selection, rating_if_recently_rated as fetch_rating, use_playback_state,
+        weighted_playback,
     },
 };
 use dioxus::prelude::*;

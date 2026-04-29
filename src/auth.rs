@@ -91,8 +91,6 @@ mod gated {
 
     #[cfg(feature = "server")]
     async fn verify_password(password: &str) -> Result<bool> {
-        use std::path::Path;
-
         use crate::config::config_server;
         use argon2::{
             Argon2,

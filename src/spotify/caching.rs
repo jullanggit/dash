@@ -1,22 +1,5 @@
-#[cfg(feature = "server")]
-use dashmap::DashMap;
 use dioxus::prelude::*;
 use dioxus_sdk_time::use_interval;
-use serde::{Serialize, de::DeserializeOwned};
-use std::env::home_dir;
-#[cfg(feature = "server")]
-use std::{
-    fmt::Display,
-    hash::Hash,
-    sync::{Arc, OnceLock},
-};
-use time::{Duration, UtcDateTime};
-#[cfg(feature = "server")]
-use tokio::{
-    fs,
-    sync::{Mutex, MutexGuard, RwLock},
-    time::{Duration as TokioDuration, sleep},
-};
 
 pub fn use_server_fn<F, T>(f: F, interval: time::Duration) -> Signal<Option<T>>
 where
@@ -48,6 +31,7 @@ where
 #[macro_export]
 macro_rules! caching {
     ($fn_name:ident, $return:ty, $closure:expr, $const:ident, $interval:expr) => {
+        #[allow(clippy::crate_in_macro_def)]
         #[cfg(feature = "server")]
         static $const: crate::spotify::caching::SingleValueCache<$return> = crate::spotify::caching::SingleValueCache {
             last_fetched: tokio::sync::Mutex::const_new(UtcDateTime::MIN), // TODO: load last_fetched from cache
@@ -59,6 +43,7 @@ macro_rules! caching {
         /// Server-only function, returns output directly
         #[cfg(feature = "server")]
         pub async fn ${ concat($fn_name, _server) }() -> $return {
+            #[allow(clippy::crate_in_macro_def)]
             use crate::spotify::caching::Cache;
             $const.caching((), $closure).await
         }
@@ -83,6 +68,7 @@ macro_rules! caching {
 #[macro_export]
 macro_rules! caching_hashmap {
     ($fn_name:ident, $key:ty, $return:ty, $closure:expr, $const:ident, $interval:expr) => {
+        #[allow(clippy::crate_in_macro_def)]
         #[cfg(feature = "server")]
         static $const: crate::spotify::caching::HashmapCache<$key, $return> = crate::spotify::caching::HashmapCache {
             last_fetched: std::sync::LazyLock::new(dashmap::DashMap::new),
@@ -94,6 +80,7 @@ macro_rules! caching_hashmap {
         /// Server-only function, returns output directly
         #[cfg(feature = "server")]
         pub async fn ${ concat($fn_name, _server) }(key: $key) -> $return {
+            #[allow(clippy::crate_in_macro_def)]
             use crate::spotify::caching::Cache;
             $const.caching(key, $closure).await
         }
@@ -120,26 +107,21 @@ pub use server_only::*;
 #[cfg(feature = "server")]
 mod server_only {
     use dashmap::DashMap;
-    use dashmap::mapref::one::Ref;
     use dioxus::prelude::*;
-    use dioxus_sdk_time::use_interval;
-    use serde::Deserialize;
-    use serde::{Serialize, de::DeserializeOwned};
-    use std::env::home_dir;
-    use std::error::Error;
-    use std::marker::PhantomData;
-    use std::ops::{Deref, DerefMut};
-    use std::path::PathBuf;
+    use serde::{Deserialize, Serialize, de::DeserializeOwned};
     use std::{
+        env::home_dir,
         fmt::Display,
         hash::Hash,
-        sync::{Arc, LazyLock, OnceLock},
+        marker::PhantomData,
+        ops::{Deref, DerefMut},
+        path::PathBuf,
+        sync::{Arc, LazyLock},
     };
     use time::{Duration, UtcDateTime};
-    use tokio::sync::TryLockError;
     use tokio::{
         fs,
-        sync::{Mutex, MutexGuard, RwLock},
+        sync::{Mutex, TryLockError},
         time::{Duration as TokioDuration, sleep},
     };
 
@@ -206,8 +188,8 @@ mod server_only {
         ) -> impl Future<Output = anyhow::Result<()>> + Send {
             async move {
                 let path = self
-                    .disk_cache_path(&key)
-                    .with_context(|| format!("Failed to get disk cache path"))?;
+                    .disk_cache_path(key)
+                    .context("Failed to get disk cache path")?;
                 fs::create_dir_all(path.parent().context("Disk cache path has no parent")?)
                     .await
                     .context("Failed to create disk cache parent dir")?;

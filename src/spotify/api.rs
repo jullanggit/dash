@@ -8,8 +8,6 @@ use crate::{
         playback::{PlaybackOptions, PlaybackSelection},
     },
 };
-#[cfg(feature = "server")]
-use dashmap::DashMap;
 use dioxus::prelude::*;
 #[cfg(feature = "server")]
 use futures::Stream;
@@ -29,19 +27,12 @@ use rspotify_model::{
 };
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
-use std::{
-    collections::HashSet,
-    iter,
-    sync::{Arc, LazyLock, OnceLock},
-};
+use std::{collections::HashSet, iter, sync::OnceLock};
 #[cfg(feature = "server")]
 use std::{fmt::Debug, pin::Pin};
 use time::{Duration, UtcDateTime};
 #[cfg(feature = "server")]
-use tokio::{
-    sync::{Mutex, RwLock},
-    time::sleep,
-};
+use tokio::time::sleep;
 
 #[cfg(feature = "server")]
 static SPOTIFY: OnceLock<AuthCodeSpotify> = OnceLock::new();
@@ -467,7 +458,7 @@ fn simplified_playlist(playlist: &rspotify_model::FullPlaylist) -> SimplifiedPla
 caching!(
     user,
     PrivateUser,
-    |_, previous| async move {
+    |_, _| async move {
         let spotify = spotify().await;
         retrying(move |_| async move { spotify.me().await }, ())
             .await
@@ -687,12 +678,12 @@ caching_hashmap!(
 
         let spotify = spotify().await;
 
-        Ok(retrying(
+        retrying(
             move |artist_id| async move { spotify.artist(artist_id).await },
             artist_id.clone(),
         )
         .await
-        .with_context(|| format!("Failed to get artist {artist_id}"))?)
+        .with_context(|| format!("Failed to get artist {artist_id}"))
     },
     ARTISTS,
     Duration::weeks(4) // assume artists are mostly static
