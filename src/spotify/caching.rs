@@ -34,9 +34,9 @@ macro_rules! caching {
         #[allow(clippy::crate_in_macro_def)]
         #[cfg(feature = "server")]
         static $const: crate::spotify::caching::SingleValueCache<$return> = crate::spotify::caching::SingleValueCache {
-            last_fetched: tokio::sync::Mutex::const_new(UtcDateTime::MIN), // TODO: load last_fetched from cache
             interval: $interval,
             name: stringify!($fn_name),
+            updating: crate::spotify::caching::Updating::default(),
             _v: std::marker::PhantomData,
         };
 
@@ -71,9 +71,9 @@ macro_rules! caching_hashmap {
         #[allow(clippy::crate_in_macro_def)]
         #[cfg(feature = "server")]
         static $const: crate::spotify::caching::HashmapCache<$key, $return> = crate::spotify::caching::HashmapCache {
-            last_fetched: std::sync::LazyLock::new(dashmap::DashMap::new),
             interval: $interval,
             name: stringify!($fn_name),
+            updating: std::sync::LazyLock::new(|| tokio::sync::RwLock::new(std::collections::HashMap::new())),
             _v: std::marker::PhantomData,
         };
 
@@ -106,22 +106,25 @@ pub use server_only::*;
 
 #[cfg(feature = "server")]
 mod server_only {
-    use dashmap::DashMap;
     use dioxus::prelude::*;
     use serde::{Deserialize, Serialize, de::DeserializeOwned};
     use std::{
+        collections::HashMap,
         env::home_dir,
         fmt::Display,
         hash::Hash,
         marker::PhantomData,
         ops::{Deref, DerefMut},
         path::PathBuf,
-        sync::{Arc, LazyLock},
+        sync::{
+            Arc, LazyLock,
+            atomic::{AtomicBool, Ordering},
+        },
     };
     use time::{Duration, UtcDateTime};
     use tokio::{
         fs,
-        sync::{Mutex, TryLockError},
+        sync::{Mutex, RwLock, TryLockError},
         time::{Duration as TokioDuration, sleep},
     };
 
@@ -158,12 +161,10 @@ mod server_only {
     );
 
     pub trait Cache: Sync {
-        type Guard: Deref<Target = UtcDateTime> + DerefMut + Send;
         type K: CacheKey;
         type V: CacheValue;
 
-        fn try_lock_last_fetched(&'static self, key: &Self::K)
-        -> Result<Self::Guard, TryLockError>;
+        fn updating(&self, key: &Self::K) -> impl Future<Output = &Updating> + Send;
         fn interval(&self) -> Duration;
         fn disk_cache_path(&self, key: &Self::K) -> Option<PathBuf>;
 
@@ -217,19 +218,28 @@ mod server_only {
                 let now = UtcDateTime::now();
 
                 let cached = self.read_disk_cache(&key).await;
-                let needs_update = self
-                    .try_lock_last_fetched(&key)
-                    .map(|last_fetched| (now > *last_fetched + self.interval(), last_fetched));
-                match (cached, needs_update) {
-                    // there is a cached value, and it doesn't need updating
-                    (Some(cached), Ok((false, _))) | (Some(cached), Err(_)) => cached.value.clone(),
-                    // no other request is currently updating the value, and it needs updating; update it
-                    (cached, Ok((true, guard))) => {
+                // (guard, needs update)
+                let update = self.updating(&key).await.try_claim().map(|guard| {
+                    (
+                        guard,
+                        cached
+                            .as_ref()
+                            .map(|WithLastFetched { last_fetched, .. }| {
+                                now > *last_fetched + self.interval()
+                            })
+                            .unwrap_or(true),
+                    )
+                });
+
+                match (cached, update) {
+                    // there is a cached value, and it doesn't need updating by this call
+                    (Some(cached), Some((_, false))) | (Some(cached), None) => cached.value.clone(),
+                    // the value needs updating by this call; update it
+                    (cached, Some((guard, true))) => {
                         let key_clone = key.clone();
                         let write_disk_cache =
-                            async move |value: Self::V, mut guard: Self::Guard| {
+                            async move |value: Self::V, mut guard: UpdatingGuard| {
                                 let now = UtcDateTime::now();
-                                *guard = now;
 
                                 let value = WithLastFetched {
                                     last_fetched: now,
@@ -274,14 +284,14 @@ mod server_only {
                         }
                     }
                     // cache not yet initialized, but another request is currently doing so; wait for that to complete
-                    (None, Err(_)) => loop {
+                    (None, None) => loop {
                         if let Some(value) = self.read_disk_cache(&key).await {
                             return value.value.clone();
                         }
 
                         sleep(TokioDuration::from_millis(100)).await;
                     },
-                    (None, Ok((false, _))) => {
+                    (None, Some((_, false))) => {
                         panic!("If the value doesn't need updating, there should be a cached value")
                     }
                 }
@@ -289,8 +299,29 @@ mod server_only {
         }
     }
 
+    pub struct Updating(AtomicBool);
+    impl Updating {
+        fn try_claim(&self) -> Option<UpdatingGuard> {
+            self.0
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+                .then_some(UpdatingGuard(&self.0))
+        }
+    }
+    impl const Default for Updating {
+        fn default() -> Self {
+            Self(AtomicBool::new(false))
+        }
+    }
+    struct UpdatingGuard<'a>(&'a AtomicBool);
+    impl<'a> Drop for UpdatingGuard<'a> {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::Release);
+        }
+    }
+
     pub struct SingleValueCache<V> {
-        pub last_fetched: Mutex<UtcDateTime>,
+        pub updating: Updating,
         pub interval: Duration,
         pub name: &'static str,
         pub _v: PhantomData<V>,
@@ -299,15 +330,14 @@ mod server_only {
     where
         V: CacheValue,
     {
-        type Guard = tokio::sync::MutexGuard<'static, UtcDateTime>;
         type K = ();
         type V = V;
 
         fn interval(&self) -> Duration {
             self.interval
         }
-        fn try_lock_last_fetched(&'static self, _: &Self::K) -> Result<Self::Guard, TryLockError> {
-            self.last_fetched.try_lock()
+        async fn updating(&self, _: &()) -> &Updating {
+            &self.updating
         }
         fn disk_cache_path(&self, _: &Self::K) -> Option<PathBuf> {
             home_dir().map(|mut path| {
@@ -318,17 +348,16 @@ mod server_only {
     }
 
     pub struct HashmapCache<K, V> {
-        pub last_fetched: LazyLock<DashMap<K, Arc<Mutex<UtcDateTime>>>>,
+        pub updating: LazyLock<RwLock<HashMap<K, &'static Updating>>>,
         pub interval: Duration,
         pub name: &'static str,
         pub _v: PhantomData<V>,
     }
     impl<K, V> Cache for HashmapCache<K, V>
     where
-        K: CacheKey + Display,
+        K: CacheKey + Display + Clone,
         V: CacheValue,
     {
-        type Guard = tokio::sync::OwnedMutexGuard<UtcDateTime>;
         type K = K;
         type V = V;
 
@@ -336,14 +365,27 @@ mod server_only {
             self.interval
         }
 
-        fn try_lock_last_fetched(&self, key: &Self::K) -> Result<Self::Guard, TryLockError> {
-            let mutex = Arc::clone(
-                &*self
-                    .last_fetched
-                    .entry(key.clone())
-                    .or_insert_with(|| Arc::new(Mutex::new(UtcDateTime::MIN))),
-            );
-            mutex.try_lock_owned()
+        async fn updating(&self, key: &Self::K) -> &Updating {
+            // read-lock fastpath
+            {
+                let read_guard = self.updating.read().await;
+                if let Some(&updating) = read_guard.get(&key) {
+                    return updating;
+                }
+            }
+
+            // write-lock slowpath
+            let mut write_guard = self.updating.write().await;
+
+            // double-check to avoid unused leak
+            if let Some(&updating) = write_guard.get(&key) {
+                return updating;
+            }
+
+            let value = Box::leak(Box::new(Updating::default())); // leaking is fine as the collection is append-only anyways
+
+            write_guard.insert(key.clone(), value);
+            value
         }
 
         fn disk_cache_path(&self, key: &Self::K) -> Option<PathBuf> {

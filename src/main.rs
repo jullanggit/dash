@@ -1,6 +1,8 @@
 #![feature(macro_metavar_expr_concat)]
 #![feature(iter_intersperse)]
 #![feature(option_reference_flattening)]
+#![feature(const_trait_impl)]
+#![feature(const_default)]
 
 #[cfg(feature = "server")]
 #[global_allocator]
