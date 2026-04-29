@@ -274,7 +274,7 @@ pub fn weight(rating: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{PlaybackSelection, choose_random_song};
-    use crate::spotify::analyze::{Analyzation, TrackAnalyzation};
+    use crate::spotify::analyze::{Analyzation, DEFAULT_RATING, TrackAnalyzation};
     use rspotify_model::{FullTrack, Id, PlayHistory, TrackId};
 
     fn track(id: &'static str) -> TrackId<'static> {

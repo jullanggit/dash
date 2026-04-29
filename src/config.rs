@@ -9,7 +9,7 @@ use tokio::sync::{Mutex, RwLock};
 caching!(
     config,
     Config,
-    async |(), _| -> anyhow::Result<_> {
+    async |_| -> anyhow::Result<_> {
         trace!("Getting config");
 
         Ok(serde_json::from_str(

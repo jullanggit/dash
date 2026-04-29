@@ -93,7 +93,7 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
 caching!(
     rating_playlists,
     Vec<(f32, SimplifiedPlaylist)>,
-    |_, _| async move {
+    |_| async move {
         let spotify = spotify().await;
         let mut playlists: Vec<(f32, SimplifiedPlaylist)> = Vec::new();
 
@@ -210,7 +210,7 @@ caching!(
     ratings,
     Analyzation,
     // get ratings. Only re-fetch ratings within the last 15 minutes.
-    |_, previous| async move {
+    |previous| async move {
         use crate::spotify::analyze::analyze;
         use std::collections::HashMap;
 
@@ -299,7 +299,7 @@ caching!(
     saved_tracks,
     HashSet<TrackId<'static>>,
     // get ratings. Only re-fetch ratings within the last 15 minutes.
-    |_, previous| async move {
+    |previous| async move {
         let spotify = spotify().await;
         let mut saved_tracks = previous.unwrap_or_default();
 
@@ -339,7 +339,7 @@ caching!(
 caching!(
     playback_state,
     Option<CurrentPlaybackContext>,
-    |_, _| async move {
+    |_| async move {
         trace!("Getting playback state");
 
         let spotify = spotify().await;
@@ -357,7 +357,7 @@ caching!(
 caching!(
     queue,
     Vec<PlayableItem>,
-    |_, _| async move {
+    |_| async move {
         trace!("Getting queue");
 
         let spotify = spotify().await;
@@ -373,6 +373,7 @@ caching!(
 );
 #[cfg(feature = "server")]
 pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> {
+    use crate::spotify::caching::CACHE;
     use rspotify_model::{SimplifiedAlbum, Type};
     use std::collections::HashMap;
 
@@ -385,13 +386,18 @@ pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> 
     if let Err(e) = res {
         Err(anyhow::anyhow!("Failed to add track {track} to queue: {e}"))
     } else {
-        QUEUE
-            .in_mem_cache
-            .write()
-            .await
-            .get_or_insert_default()
+        use std::any::Any;
+
+        let queue = CACHE
+            .get()
+            .unwrap()
+            .get("queue-")
+            .await?
+            .context("Failed to get cached queue")?;
+
+        ((&*queue.value().inner) as &dyn Any)
+            .downcast_ref::<Vec<PlayableItem>>()
             .insert(
-                0,
                 // dummy item with id set
                 PlayableItem::Track(FullTrack {
                     album: SimplifiedAlbum::default(),
@@ -423,7 +429,7 @@ caching!(
     recently_played,
     Vec<PlayHistory>,
     // TODO: maybe use previous
-    |_, _| async move {
+    |_| async move {
         trace!("Getting queue");
 
         let spotify = spotify().await;
@@ -464,7 +470,7 @@ fn simplified_playlist(playlist: &rspotify_model::FullPlaylist) -> SimplifiedPla
 caching!(
     user,
     PrivateUser,
-    |_, previous| async move {
+    |previous| async move {
         let spotify = spotify().await;
         retrying(move |_| async move { spotify.me().await }, ())
             .await
@@ -731,7 +737,7 @@ caching_hashmap!(
 caching!(
     playback_options,
     PlaybackOptions,
-    |_, previous| async move { Ok(previous.unwrap_or_default()) },
+    |previous| async move { Ok(previous.unwrap_or_default()) },
     PLAYBACK_OPTIONS,
     Duration::seconds(5)
 );
