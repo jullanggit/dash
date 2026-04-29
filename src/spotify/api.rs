@@ -1,3 +1,5 @@
+#[cfg(feature = "server")]
+use crate::spotify::caching::Cache;
 use crate::{
     caching, caching_hashmap,
     spotify::{
@@ -385,36 +387,37 @@ pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> 
     if let Err(e) = res {
         Err(anyhow::anyhow!("Failed to add track {track} to queue: {e}"))
     } else {
-        QUEUE
-            .in_mem_cache
-            .write()
-            .await
-            .get_or_insert_default()
-            .insert(
-                0,
-                // dummy item with id set
-                PlayableItem::Track(FullTrack {
-                    album: SimplifiedAlbum::default(),
-                    artists: Vec::new(),
-                    available_markets: Vec::new(),
-                    disc_number: 0,
-                    duration: Default::default(),
-                    explicit: false,
-                    external_ids: HashMap::new(),
-                    external_urls: HashMap::new(),
-                    href: None,
-                    id: Some(track),
-                    is_local: false,
-                    is_playable: None,
-                    linked_from: None,
-                    restrictions: None,
-                    name: String::new(),
-                    popularity: 0,
-                    preview_url: None,
-                    track_number: 0,
-                    r#type: Type::Track,
-                }),
-            );
+        let mut with_last_fetched = QUEUE.read_disk_cache(&()).await.unwrap_or_default();
+        with_last_fetched.value.insert(
+            0,
+            // dummy item with id set
+            PlayableItem::Track(FullTrack {
+                album: SimplifiedAlbum::default(),
+                artists: Vec::new(),
+                available_markets: Vec::new(),
+                disc_number: 0,
+                duration: Default::default(),
+                explicit: false,
+                external_ids: HashMap::new(),
+                external_urls: HashMap::new(),
+                href: None,
+                id: Some(track),
+                is_local: false,
+                is_playable: None,
+                linked_from: None,
+                restrictions: None,
+                name: String::new(),
+                popularity: 0,
+                preview_url: None,
+                track_number: 0,
+                r#type: Type::Track,
+            }),
+        );
+
+        if let Err(e) = QUEUE.write_disk_cache(&(), with_last_fetched).await {
+            warn!("Failed to add newly inserted queue item to disk cache: {e}");
+        }
+
         Ok(())
     }
 }
@@ -501,13 +504,20 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
     .context("Failed to create rating playlist")?;
     let playlist = simplified_playlist(&playlist);
 
-    let mut cache = RATING_PLAYLISTS.in_mem_cache.write().await;
-    let playlists = cache.get_or_insert_default();
+    let mut playlists = RATING_PLAYLISTS
+        .read_disk_cache(&())
+        .await
+        .unwrap_or_default();
     if !playlists
+        .value
         .iter()
         .any(|(playlist_rating, _)| *playlist_rating == rating)
     {
-        playlists.push((rating, playlist.clone()));
+        playlists.value.push((rating, playlist.clone()));
+    }
+
+    if let Err(e) = RATING_PLAYLISTS.write_disk_cache(&(), playlists).await {
+        warn!("Failed to write newly created playlist to disk cache: {e}")
     }
 
     Ok(playlist)
@@ -545,37 +555,52 @@ async fn update_rating_caches(
     track: &FullTrack,
     rating: f32,
 ) -> Result<f32> {
-    use crate::spotify::analyze::analyze;
+    use crate::spotify::{analyze::analyze, caching::WithLastFetched};
 
     {
-        let mut playlists_cache = RATING_PLAYLISTS.in_mem_cache.write().await;
-        let playlists = playlists_cache.get_or_insert_default();
+        use crate::spotify::caching::Cache;
+
+        let mut playlists = RATING_PLAYLISTS
+            .read_disk_cache(&())
+            .await
+            .unwrap_or_default();
 
         if !playlists
+            .value
             .iter()
             .any(|(other_rating, _)| *other_rating == rating)
         {
-            playlists.push((rating, playlist.clone()));
+            playlists.value.push((rating, playlist.clone()));
+        }
+
+        if let Err(e) = RATING_PLAYLISTS.write_disk_cache(&(), playlists).await {
+            warn!("Failed to update rating playlists disk cache: {e}");
         }
     }
 
-    if let Some(items) = PLAYLIST_ITEMS.in_mem_cache.get() {
-        use dashmap::mapref::entry::Entry;
-
-        match items.entry(playlist.id.clone()) {
-            Entry::Occupied(mut entry) => {
-                entry.get_mut().insert(0, track.clone());
-            }
-            Entry::Vacant(entry) if playlist.items.total == 0 => {
-                entry.insert(vec![track.clone()]);
-            }
-            // playlist is not known to be empty, wait for next refetch for source of truth
-            Entry::Vacant(_) => {}
+    let items = match PLAYLIST_ITEMS.read_disk_cache(&playlist.id.clone()).await {
+        Some(mut items) => {
+            items.value.insert(0, track.clone());
+            Some(items)
+        }
+        None if playlist.items.total == 0 => Some(WithLastFetched {
+            value: vec![track.clone()],
+            ..Default::default()
+        }),
+        // playlist is not known to be empty, wait for next refetch for source of truth
+        None => None,
+    };
+    if let Some(items) = items {
+        if let Err(e) = PLAYLIST_ITEMS
+            .write_disk_cache(&playlist.id.clone(), items)
+            .await
+        {
+            warn!("Failed to update playlist items to disk cache: {e}")
         }
     }
 
-    let cached_ratings = ratings_server().await;
-    let mut tracks = cached_ratings.tracks;
+    let mut cached_ratings = RATINGS.read_disk_cache(&()).await.unwrap_or_default();
+    let tracks = &mut cached_ratings.value.tracks;
     let entry = match tracks
         .iter_mut()
         .find(|(cached_track, _)| cached_track.id.as_ref() == track.id.as_ref())
@@ -589,15 +614,18 @@ async fn update_rating_caches(
     };
     entry.rating_history.push((UtcDateTime::now(), rating));
 
-    let updated = analyze(tracks).await;
-    let canonical_rating = updated.rating(
+    cached_ratings.value = analyze(tracks.clone()).await;
+    let canonical_rating = cached_ratings.value.rating(
         track
             .id
             .as_ref()
             .expect("full track used for rating updates should have an id")
             .as_ref(),
     );
-    *RATINGS.in_mem_cache.write().await = Some(updated);
+
+    if let Err(e) = RATINGS.write_disk_cache(&(), cached_ratings).await {
+        warn!("Failed to update ratings disk cache: {e}");
+    }
 
     Ok(canonical_rating)
 }
@@ -736,36 +764,41 @@ caching!(
     Duration::seconds(5)
 );
 
+#[cfg(feature = "server")]
+async fn update_playback_options(f: impl FnOnce(&mut PlaybackOptions)) -> Result<()> {
+    crate::assert_authenticated!();
+
+    let mut options = PLAYBACK_OPTIONS
+        .read_disk_cache(&())
+        .await
+        .unwrap_or_default();
+
+    f(&mut options.value);
+
+    Ok(PLAYBACK_OPTIONS
+        .write_disk_cache(&(), options)
+        .await
+        .context("Failed to change playback options")?)
+}
+
 #[server]
 pub async fn weighted_playback(playlist: PlaylistId<'static>, enabled: bool) -> Result<()> {
-    crate::assert_authenticated!();
-    let mut option = PLAYBACK_OPTIONS.in_mem_cache.write().await;
-    let options = option.get_or_insert_with(PlaybackOptions::default);
-    if enabled {
-        options.weighted_playback_playlists.insert(playlist);
-    } else {
-        options.weighted_playback_playlists.remove(&playlist);
-    }
-
-    Ok(())
+    update_playback_options(move |options| {
+        if enabled {
+            options.weighted_playback_playlists.insert(playlist);
+        } else {
+            options.weighted_playback_playlists.remove(&playlist);
+        }
+    })
+    .await
 }
 
 #[server]
 pub async fn playback_selection(selection: PlaybackSelection) -> Result<()> {
-    crate::assert_authenticated!();
-    let mut option = PLAYBACK_OPTIONS.in_mem_cache.write().await;
-    let options = option.get_or_insert_with(PlaybackOptions::default);
-    options.selection = selection;
-
-    Ok(())
+    update_playback_options(|options| options.selection = selection).await
 }
 
 #[server]
 pub async fn playback_rating_cutoff(rating_cutoff: f32) -> Result<()> {
-    crate::assert_authenticated!();
-    let mut option = PLAYBACK_OPTIONS.in_mem_cache.write().await;
-    let options = option.get_or_insert_with(PlaybackOptions::default);
-    options.rating_cutoff = rating_cutoff.clamp(0.0, 5.0);
-
-    Ok(())
+    update_playback_options(|options| options.rating_cutoff = rating_cutoff.clamp(0.0, 5.0)).await
 }
