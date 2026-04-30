@@ -66,6 +66,7 @@
               pkg-config
               binaryen # wasm-opt
               jemalloc-tikv
+              podman
             ];
             JEMALLOC_OVERRIDE = "${jemalloc-tikv}/lib/libjemalloc.a";
           };
