@@ -32,14 +32,14 @@ EOF
         rustup target add wasm32-unknown-unknown
     fi
 
-    # APT: update lists (still runs each time, but that's fast)
+    # hopefully fast - should reuse cache
     apt-get update
-
-    # Install packages – cached .deb files will be reused
     apt-get install -y build-essential pkg-config libssl-dev curl ca-certificates
 
-    curl -L https://github.com/DioxusLabs/dioxus/releases/download/v0.7.3/dx-x86_64-unknown-linux-gnu.tar.gz > dx.tar.gz
-    tar -xf dx.tar.gz
-    ./dx bundle --web --release
-    rm dx dx.tar.gz
+    if [ ! -f target/ubuntu-build/dx ]; then
+	    curl -L https://github.com/DioxusLabs/dioxus/releases/download/v0.7.3/dx-x86_64-unknown-linux-gnu.tar.gz > target/ubuntu-build/dx.tar.gz
+	    tar -xf target/ubuntu-build/dx.tar.gz
+    fi
+
+    ./target/ubuntu-build/dx bundle --web --release
 "
