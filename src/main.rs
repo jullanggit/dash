@@ -2,6 +2,10 @@
 #![feature(iter_intersperse)]
 #![feature(option_reference_flattening)]
 
+#[cfg(feature = "server")]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 // The dioxus prelude contains a ton of common items used in dioxus apps. It's a good idea to import wherever you
 // need dioxus
 use dioxus::prelude::*;

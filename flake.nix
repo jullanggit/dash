@@ -42,22 +42,33 @@
         );
       in
       {
-        devShells.default = pkgs.mkShell {
-          packages = with pkgs; [
-            rustToolchain
-            dioxus-cli
-            vtsls
-            eslint
-            swc
-            just
-            tombi
-            bacon
-            tailwindcss
-            openssl
-            pkg-config
-            binaryen # wasm-opt
-          ];
-        };
+        devShells.default =
+          let
+            jemalloc-tikv = pkgs.jemalloc.overrideAttrs (oldAttrs: {
+              configureFlags = (oldAttrs.configureFlags or [ ]) ++ [
+                "--with-jemalloc-prefix=_rjem_"
+                "--with-private-namespace=_rjem_"
+              ];
+            });
+          in
+          pkgs.mkShell {
+            packages = with pkgs; [
+              rustToolchain
+              dioxus-cli
+              vtsls
+              eslint
+              swc
+              just
+              tombi
+              bacon
+              tailwindcss
+              openssl
+              pkg-config
+              binaryen # wasm-opt
+              jemalloc-tikv
+            ];
+            JEMALLOC_OVERRIDE = "${jemalloc-tikv}/lib/libjemalloc.a";
+          };
       }
     );
 }
