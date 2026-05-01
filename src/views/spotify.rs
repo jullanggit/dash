@@ -638,7 +638,7 @@ async fn charts() -> Result<Vec<String>> {
 
     let renderer = HtmlRenderer::new("Renderer", 1920, 1080);
 
-    let analyzation = ratings_server().await;
+    let analyzation = &ratings_server().await.value;
 
     Ok([
         genre_proportions,
@@ -651,7 +651,7 @@ async fn charts() -> Result<Vec<String>> {
         average_rating_per_day,
     ]
     .into_iter()
-    .map(|f| f(&analyzation))
+    .map(|f| f(analyzation))
     .map(|chart| {
         sanitize_chart_html(
             renderer
@@ -669,7 +669,7 @@ async fn canonical_rating_history_chart(track_id: TrackId<'static>) -> Result<Op
 
     assert_authenticated!();
 
-    let analyzation = ratings_server().await;
+    let analyzation = &ratings_server().await.value;
     let Some((track, analyzed)) = analyzation
         .tracks
         .iter()

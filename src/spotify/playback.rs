@@ -101,6 +101,7 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
     let queue = queue_server().await;
     let num_in_queue = |track_id| {
         queue
+            .value
             .iter()
             .filter(|item| {
                 if let PlayableItem::Track(FullTrack { id: Some(id), .. }) = item
@@ -122,26 +123,28 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
         }
     }
 
-    let context = playback_state_server().await;
+    let context = &playback_state_server().await.value;
 
     if let Some(CurrentPlaybackContext {
         context: Some(Context { _type, uri, .. }),
         ..
     }) = context
     {
-        let tracks: Option<Vec<TrackId<'static>>> = match _type {
-            Type::Playlist => match PlaylistId::from_id(&uri) {
+        let tracks: Option<Vec<TrackId<'_>>> = match _type {
+            Type::Playlist => match PlaylistId::from_id(uri) {
                 Ok(id) => {
                     let id = id.into_static();
                     if playback_options_server()
                         .await
+                        .value
                         .weighted_playback_enabled(&id)
                     {
                         Some(
                             playlist_tracks_server(id)
                                 .await
+                                .value
                                 .iter()
-                                .filter_map(|track| track.id.clone().map(TrackId::into_static))
+                                .filter_map(|track| track.id.clone())
                                 .collect::<Vec<_>>(),
                         )
                     } else {
@@ -153,18 +156,25 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
                     None
                 }
             },
-            Type::Collection => Some(saved_tracks_server().await.into_iter().collect::<Vec<_>>()),
+            Type::Collection => Some(
+                saved_tracks_server()
+                    .await
+                    .value
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            ),
             _ => None,
         };
 
         if let Some(tracks) = tracks {
-            let ratings = ratings_server().await;
-            let recently_played = recently_played_server().await;
-            let options = playback_options_server().await;
+            let ratings = &ratings_server().await.value;
+            let recently_played = &recently_played_server().await.value;
+            let options = &playback_options_server().await.value;
             let track = choose_random_song(
                 &tracks,
-                &ratings,
-                &recently_played,
+                ratings,
+                recently_played,
                 options.selection,
                 options.rating_cutoff,
             );
@@ -182,13 +192,13 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
 }
 
 #[cfg(feature = "server")]
-fn choose_random_song(
-    tracks: &[TrackId<'static>],
+fn choose_random_song<'a>(
+    tracks: &[TrackId<'a>],
     ratings: &Analyzation,
     recently_played: &[PlayHistory],
     selection: PlaybackSelection,
     rating_cutoff: f32,
-) -> Option<TrackId<'static>> {
+) -> Option<TrackId<'a>> {
     use rand::{RngExt, rng};
 
     let tracks = tracks

@@ -3,6 +3,7 @@
 #![feature(option_reference_flattening)]
 #![feature(const_trait_impl)]
 #![feature(const_default)]
+#![feature(smart_pointer_try_map)]
 
 #[cfg(feature = "server")]
 #[global_allocator]

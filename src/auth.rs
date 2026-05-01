@@ -98,7 +98,7 @@ mod gated {
         };
 
         let config = config_server().await;
-        let password_hash = tokio::fs::read_to_string(&expand_tilde(&config.password_file))
+        let password_hash = tokio::fs::read_to_string(&expand_tilde(&config.value.password_file))
             .await
             .context("failed to read password file")?;
         let parsed_hash = PasswordHash::new(password_hash.trim())

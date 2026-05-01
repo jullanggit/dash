@@ -37,12 +37,14 @@ macro_rules! caching {
             interval: $interval,
             name: stringify!($fn_name),
             updating: crate::spotify::caching::Updating::default(),
-            _v: std::marker::PhantomData,
+            cache: arc_swap::ArcSwapOption::const_empty(),
         };
 
         /// Server-only function, returns output directly
         #[cfg(feature = "server")]
-        pub async fn ${ concat($fn_name, _server) }() -> $return {
+        pub async fn ${ concat($fn_name, _server) }()
+            -> std::sync::Arc<crate::spotify::caching::WithLastFetched<$return>>
+        {
             #[allow(clippy::crate_in_macro_def)]
             use crate::spotify::caching::Cache;
             $const.caching((), $closure).await
@@ -52,7 +54,7 @@ macro_rules! caching {
         #[server]
         pub async fn $fn_name() -> Result<$return> {
             crate::assert_authenticated!();
-            Ok(${ concat($fn_name, _server) }().await)
+            Ok(${ concat($fn_name, _server) }().await.value.clone())
         }
 
         /// Client function, returns a Signal that updates every interval (
@@ -79,7 +81,9 @@ macro_rules! caching_hashmap {
 
         /// Server-only function, returns output directly
         #[cfg(feature = "server")]
-        pub async fn ${ concat($fn_name, _server) }(key: $key) -> $return {
+        pub async fn ${ concat($fn_name, _server) }(key: $key)
+            -> std::sync::Arc<crate::spotify::caching::WithLastFetched<$return>>
+        {
             #[allow(clippy::crate_in_macro_def)]
             use crate::spotify::caching::Cache;
             $const.caching(key, $closure).await
@@ -89,7 +93,7 @@ macro_rules! caching_hashmap {
         #[server]
         pub async fn $fn_name(key: $key) -> Result<$return> {
             crate::assert_authenticated!();
-            Ok(${ concat($fn_name, _server) }(key).await)
+            Ok(${ concat($fn_name, _server) }(key).await.value.clone())
         }
 
         // /// Client function, returns a Signal that updates every interval (
@@ -106,6 +110,7 @@ pub use server_only::*;
 
 #[cfg(feature = "server")]
 mod server_only {
+    use arc_swap::ArcSwapOption;
     use dioxus::prelude::*;
     use serde::{Deserialize, Serialize, de::DeserializeOwned};
     use std::{
@@ -128,7 +133,7 @@ mod server_only {
         time::{Duration as TokioDuration, sleep},
     };
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Clone)]
     pub struct WithLastFetched<V> {
         pub last_fetched: UtcDateTime,
         pub value: V,
@@ -167,27 +172,34 @@ mod server_only {
         fn updating(&self, key: &Self::K) -> impl Future<Output = &Updating> + Send;
         fn interval(&self) -> Duration;
         fn disk_cache_path(&self, key: &Self::K) -> Option<PathBuf>;
+        fn read_mem_cache(&self, key: &Self::K) -> Option<Arc<WithLastFetched<Self::V>>>;
 
-        fn read_disk_cache(
+        fn read_cache(
             &self,
             key: &Self::K,
-        ) -> impl Future<Output = Option<WithLastFetched<Self::V>>> + Send {
+        ) -> impl Future<Output = Option<Arc<WithLastFetched<Self::V>>>> + Send {
             async {
-                match self.disk_cache_path(key) {
-                    Some(path) => fs::read_to_string(path).await.ok().and_then(|contents| {
-                        serde_json::from_str::<WithLastFetched<Self::V>>(&contents).ok()
-                    }),
-                    None => None,
-                }
+                let mem = self.read_mem_cache(key);
+                if mem.is_some() {
+                    return mem;
+                };
+
+                serde_json::from_str(&fs::read_to_string(self.disk_cache_path(key)?).await.ok()?)
+                    .ok()
+                    .map(Arc::new)
             }
         }
 
-        fn write_disk_cache(
+        fn write_mem_cache(&self, key: &Self::K, value: Arc<WithLastFetched<Self::V>>);
+        fn write_cache(
             &self,
             key: &Self::K,
-            value: WithLastFetched<Self::V>,
+            value: Arc<WithLastFetched<Self::V>>,
         ) -> impl Future<Output = anyhow::Result<()>> + Send {
             async move {
+                self.write_mem_cache(key, Arc::clone(&value));
+
+                // disk cache
                 let path = self
                     .disk_cache_path(key)
                     .context("Failed to get disk cache path")?;
@@ -196,7 +208,8 @@ mod server_only {
                     .context("Failed to create disk cache parent dir")?;
                 fs::write(
                     path,
-                    serde_json::to_string(&value).context("Failed to serialize value")?,
+                    serde_json::to_string::<WithLastFetched<_>>(&value)
+                        .context("Failed to serialize value")?,
                 )
                 .await
                 .context("Failed to write to disk cache")
@@ -209,56 +222,58 @@ mod server_only {
             &'static self,
             key: Self::K,
             f: F,
-        ) -> impl Future<Output = Self::V> + Send
+        ) -> impl Future<Output = Arc<WithLastFetched<Self::V>>> + Send
         where
-            F: Fn(Self::K, Option<Self::V>) -> Fut + Send + Sync + 'static,
+            F: Fn(Self::K, Option<Arc<WithLastFetched<Self::V>>>) -> Fut + Send + Sync + 'static,
             Fut: Future<Output = Result<Self::V, anyhow::Error>> + Send + 'static,
         {
             async move {
                 let now = UtcDateTime::now();
 
-                let cached = self.read_disk_cache(&key).await;
+                let cached = self.read_cache(&key).await;
                 // (guard, needs update)
                 let update = self.updating(&key).await.try_claim().map(|guard| {
                     (
                         guard,
                         cached
                             .as_ref()
-                            .map(|WithLastFetched { last_fetched, .. }| {
-                                now > *last_fetched + self.interval()
-                            })
+                            .map(|cached| now > cached.last_fetched + self.interval())
                             .unwrap_or(true),
                     )
                 });
 
                 match (cached, update) {
                     // there is a cached value, and it doesn't need updating by this call
-                    (Some(cached), Some((_, false))) | (Some(cached), None) => cached.value.clone(),
+                    (Some(cached), Some((_, false))) | (Some(cached), None) => cached,
                     // the value needs updating by this call; update it
                     (cached, Some((guard, true))) => {
                         let key_clone = key.clone();
+                        let wrap = move |value: Self::V| {
+                            Arc::new(WithLastFetched {
+                                last_fetched: now,
+                                value,
+                            })
+                        };
                         let write_disk_cache =
-                            async move |value: Self::V, mut guard: UpdatingGuard| {
+                            async move |value: Arc<WithLastFetched<Self::V>>,
+                                        mut guard: UpdatingGuard| {
                                 let now = UtcDateTime::now();
 
-                                let value = WithLastFetched {
-                                    last_fetched: now,
-                                    value,
-                                };
-
-                                self.write_disk_cache(&key_clone, value).await
+                                self.write_cache(&key_clone, value).await
 
                                 // guard dropped
                             };
 
                         match cached {
                             // fetch and write new value to cache in the background
-                            Some(WithLastFetched { value, .. }) => {
-                                let clone = value.clone();
+                            Some(cached) => {
+                                let clone = Arc::clone(&cached);
                                 tokio::spawn(async move {
                                     match f(key, Some(clone)).await {
                                         Ok(value) => {
-                                            if let Err(e) = write_disk_cache(value, guard).await {
+                                            if let Err(e) =
+                                                write_disk_cache(wrap(value), guard).await
+                                            {
                                                 error!("Failed to write to disk cache: {e}")
                                             }
                                         }
@@ -266,16 +281,19 @@ mod server_only {
                                     }
                                 });
 
-                                value.clone()
+                                cached
                             }
                             // update synchronously, return new value once its available
                             None => match f(key, None).await {
                                 Ok(value) => {
-                                    if let Err(e) = write_disk_cache(value.clone(), guard).await {
+                                    let wrapped = wrap(value);
+                                    if let Err(e) =
+                                        write_disk_cache(Arc::clone(&wrapped), guard).await
+                                    {
                                         error!("Failed to write to disk cache: {e}")
                                     }
 
-                                    value
+                                    wrapped
                                 }
                                 Err(e) => panic!(
                                     "Failed to refresh value, and no cached one present: {e}"
@@ -285,8 +303,8 @@ mod server_only {
                     }
                     // cache not yet initialized, but another request is currently doing so; wait for that to complete
                     (None, None) => loop {
-                        if let Some(value) = self.read_disk_cache(&key).await {
-                            return value.value.clone();
+                        if let Some(value) = self.read_cache(&key).await {
+                            return value;
                         }
 
                         sleep(TokioDuration::from_millis(100)).await;
@@ -295,6 +313,36 @@ mod server_only {
                         panic!("If the value doesn't need updating, there should be a cached value")
                     }
                 }
+            }
+        }
+
+        /// Update the cache entry at `key`
+        /// Requirements: `f` only returns None if it was called with a None
+        async fn update_cache(
+            &self,
+            key: &Self::K,
+            f: impl FnOnce(Option<&Self::V>) -> Option<Self::V>,
+        ) -> anyhow::Result<()> {
+            let new = match self.read_cache(key).await {
+                Some(cached) => Some(Arc::map(cached, |wlf| WithLastFetched {
+                    value: f(Some(&wlf.value))
+                        .expect("Supplied function should only return None if cached is None"),
+                    last_fetched: wlf.last_fetched,
+                })),
+                None => {
+                    let now = UtcDateTime::now();
+                    f(None).map(|value| {
+                        Arc::new(WithLastFetched {
+                            last_fetched: now,
+                            value,
+                        })
+                    })
+                }
+            };
+            if let Some(new) = new {
+                self.write_cache(key, new).await
+            } else {
+                Ok(())
             }
         }
     }
@@ -324,7 +372,7 @@ mod server_only {
         pub updating: Updating,
         pub interval: Duration,
         pub name: &'static str,
-        pub _v: PhantomData<V>,
+        pub cache: ArcSwapOption<WithLastFetched<V>>,
     }
     impl<V> Cache for SingleValueCache<V>
     where
@@ -344,6 +392,14 @@ mod server_only {
                 path.push(format!(".cache/dash/{}.json", self.name));
                 path
             })
+        }
+
+        fn read_mem_cache(&self, _: &Self::K) -> Option<Arc<WithLastFetched<Self::V>>> {
+            self.cache.load_full()
+        }
+
+        fn write_mem_cache(&self, _: &Self::K, value: Arc<WithLastFetched<Self::V>>) {
+            self.cache.swap(Some(value));
         }
     }
 
@@ -394,5 +450,11 @@ mod server_only {
                 path
             })
         }
+
+        // TODO: implement cache
+        fn read_mem_cache(&self, _key: &Self::K) -> Option<Arc<WithLastFetched<Self::V>>> {
+            None
+        }
+        fn write_mem_cache(&self, _key: &Self::K, _value: Arc<WithLastFetched<Self::V>>) {}
     }
 }

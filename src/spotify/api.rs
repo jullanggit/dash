@@ -208,9 +208,9 @@ caching!(
         use std::collections::HashMap;
 
         let spotify = spotify().await.clone();
-        let playlists = rating_playlists_server().await;
-        let mut previous = previous.unwrap_or_default();
-        let previous_snapshot_ids = std::mem::take(&mut previous.playlist_snapshot_ids);
+        let playlists = &rating_playlists_server().await.value;
+        let mut previous = previous.unwrap_or_default().value.clone();
+        let previous_snapshot_ids = previous.playlist_snapshot_ids;
         let mut ratings = previous.tracks;
 
         trace!("Getting ratings");
@@ -220,7 +220,7 @@ caching!(
             .map(|(_, playlist)| (playlist.id.clone(), playlist.snapshot_id.clone()))
             .collect::<HashMap<_, _>>();
 
-        for (rating, playlist) in playlists {
+        for (rating, playlist) in playlists.iter() {
             if previous_snapshot_ids
                 .get(&playlist.id)
                 .is_some_and(|previous| *previous == playlist.snapshot_id)
@@ -261,7 +261,7 @@ caching!(
 
                         let data = (
                             UtcDateTime::from_unix_timestamp(added_at.timestamp()).unwrap(),
-                            rating,
+                            *rating,
                         );
 
                         if entry.rating_history.contains(&data) {
@@ -294,7 +294,9 @@ caching!(
     // get ratings. Only re-fetch ratings within the last 15 minutes.
     |_, previous| async move {
         let spotify = spotify().await;
-        let mut saved_tracks = previous.unwrap_or_default();
+        let mut saved_tracks = previous
+            .map(|previous| previous.value.clone())
+            .unwrap_or_default();
 
         trace!("Getting saved tracks");
 
@@ -378,34 +380,40 @@ pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> 
     if let Err(e) = res {
         Err(anyhow::anyhow!("Failed to add track {track} to queue: {e}"))
     } else {
-        let mut with_last_fetched = QUEUE.read_disk_cache(&()).await.unwrap_or_default();
-        with_last_fetched.value.insert(
-            0,
-            // dummy item with id set
-            PlayableItem::Track(FullTrack {
-                album: SimplifiedAlbum::default(),
-                artists: Vec::new(),
-                available_markets: Vec::new(),
-                disc_number: 0,
-                duration: Default::default(),
-                explicit: false,
-                external_ids: HashMap::new(),
-                external_urls: HashMap::new(),
-                href: None,
-                id: Some(track),
-                is_local: false,
-                is_playable: None,
-                linked_from: None,
-                restrictions: None,
-                name: String::new(),
-                popularity: 0,
-                preview_url: None,
-                track_number: 0,
-                r#type: Type::Track,
-            }),
-        );
+        use std::sync::Arc;
 
-        if let Err(e) = QUEUE.write_disk_cache(&(), with_last_fetched).await {
+        let mut with_last_fetched =
+            Arc::map(QUEUE.read_cache(&()).await.unwrap_or_default(), |wlf| {
+                let mut wlf = wlf.clone();
+                wlf.value.insert(
+                    0,
+                    // dummy item with id set
+                    PlayableItem::Track(FullTrack {
+                        album: SimplifiedAlbum::default(),
+                        artists: Vec::new(),
+                        available_markets: Vec::new(),
+                        disc_number: 0,
+                        duration: Default::default(),
+                        explicit: false,
+                        external_ids: HashMap::new(),
+                        external_urls: HashMap::new(),
+                        href: None,
+                        id: Some(track),
+                        is_local: false,
+                        is_playable: None,
+                        linked_from: None,
+                        restrictions: None,
+                        name: String::new(),
+                        popularity: 0,
+                        preview_url: None,
+                        track_number: 0,
+                        r#type: Type::Track,
+                    }),
+                );
+                wlf
+            });
+
+        if let Err(e) = QUEUE.write_cache(&(), with_last_fetched).await {
             warn!("Failed to add newly inserted queue item to disk cache: {e}");
         }
 
@@ -475,10 +483,11 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
 
     if let Some((_, playlist)) = rating_playlists_server()
         .await
-        .into_iter()
+        .value
+        .iter()
         .find(|(playlist_rating, _)| *playlist_rating == rating)
     {
-        return Ok(playlist);
+        return Ok(playlist.clone());
     }
 
     let spotify = spotify().await;
@@ -489,25 +498,26 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
                 .user_playlist_create(user_id.as_ref(), &playlist_name, Some(false), None, None)
                 .await
         },
-        (spotify, user.id, playlist_name),
+        (spotify, user.value.id.as_ref(), playlist_name),
     )
     .await
     .context("Failed to create rating playlist")?;
     let playlist = simplified_playlist(&playlist);
 
-    let mut playlists = RATING_PLAYLISTS
-        .read_disk_cache(&())
-        .await
-        .unwrap_or_default();
-    if !playlists
-        .value
-        .iter()
-        .any(|(playlist_rating, _)| *playlist_rating == rating)
-    {
-        playlists.value.push((rating, playlist.clone()));
-    }
+    let mut ret = RATING_PLAYLISTS
+        .update_cache(&(), |playlists| {
+            let mut playlists = playlists.cloned().unwrap_or_default();
+            if !playlists
+                .iter()
+                .any(|(playlist_rating, _)| *playlist_rating == rating)
+            {
+                playlists.push((rating, playlist.clone()));
+            }
+            Some(playlists)
+        })
+        .await;
 
-    if let Err(e) = RATING_PLAYLISTS.write_disk_cache(&(), playlists).await {
+    if let Err(e) = ret {
         warn!("Failed to write newly created playlist to disk cache: {e}")
     }
 
@@ -546,75 +556,84 @@ async fn update_rating_caches(
     track: &FullTrack,
     rating: f32,
 ) -> Result<f32> {
-    use crate::spotify::{analyze::analyze, caching::WithLastFetched};
+    use crate::spotify::{
+        analyze::{DEFAULT_RATING, analyze},
+        caching::WithLastFetched,
+    };
 
     {
         use crate::spotify::caching::Cache;
 
-        let mut playlists = RATING_PLAYLISTS
-            .read_disk_cache(&())
-            .await
-            .unwrap_or_default();
+        let res = RATING_PLAYLISTS
+            .update_cache(&(), |playlists| {
+                let mut playlists = playlists.cloned().unwrap_or_default();
+                if !playlists
+                    .iter()
+                    .any(|(other_rating, _)| *other_rating == rating)
+                {
+                    playlists.push((rating, playlist.clone()));
+                }
 
-        if !playlists
-            .value
-            .iter()
-            .any(|(other_rating, _)| *other_rating == rating)
-        {
-            playlists.value.push((rating, playlist.clone()));
-        }
+                Some(playlists)
+            })
+            .await;
 
-        if let Err(e) = RATING_PLAYLISTS.write_disk_cache(&(), playlists).await {
+        if let Err(e) = res {
             warn!("Failed to update rating playlists disk cache: {e}");
         }
     }
 
-    let items = match PLAYLIST_ITEMS.read_disk_cache(&playlist.id.clone()).await {
-        Some(mut items) => {
-            items.value.insert(0, track.clone());
-            Some(items)
-        }
-        None if playlist.items.total == 0 => Some(WithLastFetched {
-            value: vec![track.clone()],
-            ..Default::default()
-        }),
-        // playlist is not known to be empty, wait for next refetch for source of truth
-        None => None,
-    };
-    if let Some(items) = items {
-        if let Err(e) = PLAYLIST_ITEMS
-            .write_disk_cache(&playlist.id.clone(), items)
-            .await
-        {
-            warn!("Failed to update playlist items to disk cache: {e}")
-        }
+    let res = PLAYLIST_ITEMS
+        .update_cache(&playlist.id, |items| {
+            match items {
+                Some(items) => {
+                    let mut items = items.clone();
+                    items.insert(0, track.clone());
+                    Some(items)
+                }
+                None if playlist.items.total == 0 => Some(vec![track.clone()]),
+                // playlist is not known to be empty, wait for next refetch for source of truth
+                None => None,
+            }
+        })
+        .await;
+    if let Err(e) = res {
+        warn!("Failed to update playlist items to disk cache: {e}")
     }
 
-    let mut cached_ratings = RATINGS.read_disk_cache(&()).await.unwrap_or_default();
-    let tracks = &mut cached_ratings.value.tracks;
-    let entry = match tracks
-        .iter_mut()
-        .find(|(cached_track, _)| cached_track.id.as_ref() == track.id.as_ref())
-    {
-        Some((_, analyzation)) => analyzation,
-        None => {
-            &mut tracks
-                .push_mut((track.clone(), TrackAnalyzation::default()))
-                .1
-        }
-    };
-    entry.rating_history.push((UtcDateTime::now(), rating));
+    let mut canonical_rating = DEFAULT_RATING; // should get overwritten by closure
+    let ret = RATINGS
+        .update_cache(&(), |cached_ratings| {
+            let mut cached_ratings = cached_ratings.cloned().unwrap_or_default();
 
-    cached_ratings.value = analyze(tracks.clone()).await;
-    let canonical_rating = cached_ratings.value.rating(
-        track
-            .id
-            .as_ref()
-            .expect("full track used for rating updates should have an id")
-            .as_ref(),
-    );
+            let tracks = &mut cached_ratings.tracks;
+            let entry = match tracks
+                .iter_mut()
+                .find(|(cached_track, _)| cached_track.id.as_ref() == track.id.as_ref())
+            {
+                Some((_, analyzation)) => analyzation,
+                None => {
+                    &mut tracks
+                        .push_mut((track.clone(), TrackAnalyzation::default()))
+                        .1
+                }
+            };
+            entry.rating_history.push((UtcDateTime::now(), rating));
 
-    if let Err(e) = RATINGS.write_disk_cache(&(), cached_ratings).await {
+            cached_ratings = tokio::runtime::Handle::current().block_on(analyze(tracks.clone()));
+
+            canonical_rating = cached_ratings.rating(
+                track
+                    .id
+                    .as_ref()
+                    .expect("full track used for rating updates should have an id")
+                    .as_ref(),
+            );
+
+            Some(cached_ratings)
+        })
+        .await;
+    if let Err(e) = ret {
         warn!("Failed to update ratings disk cache: {e}");
     }
 
@@ -628,6 +647,7 @@ pub async fn rating_if_recently_rated(track_id: TrackId<'static>) -> Result<Opti
     let now = UtcDateTime::now();
     Ok(ratings_server()
         .await
+        .value
         .tracks
         .iter()
         .find(|(track, _)| track.id.as_ref() == Some(&track_id))
@@ -644,7 +664,7 @@ pub async fn add_rating(track_id: TrackId<'static>, rating: f32) -> Result<f32> 
     let rating = (rating * 100.0).round() / 100.0;
     let playlist = get_or_create_playlist(rating).await?;
     let cached_ratings = ratings_server().await;
-    let track = full_track_maybe_cached(&track_id, &cached_ratings).await?;
+    let track = full_track_maybe_cached(&track_id, &cached_ratings.value).await?;
 
     let spotify = spotify().await;
     retrying(
@@ -750,7 +770,7 @@ caching_hashmap!(
 caching!(
     playback_options,
     PlaybackOptions,
-    |_, previous| async move { Ok(previous.unwrap_or_default()) },
+    |_, previous| async move { Ok(previous.unwrap_or_default().value.clone()) },
     PLAYBACK_OPTIONS,
     Duration::seconds(5)
 );
@@ -759,15 +779,12 @@ caching!(
 async fn update_playback_options(f: impl FnOnce(&mut PlaybackOptions)) -> Result<()> {
     crate::assert_authenticated!();
 
-    let mut options = PLAYBACK_OPTIONS
-        .read_disk_cache(&())
-        .await
-        .unwrap_or_default();
-
-    f(&mut options.value);
-
     Ok(PLAYBACK_OPTIONS
-        .write_disk_cache(&(), options)
+        .update_cache(&(), |options| {
+            let mut options = options.cloned().unwrap_or_default();
+            f(&mut options);
+            Some(options)
+        })
         .await
         .context("Failed to change playback options")?)
 }
