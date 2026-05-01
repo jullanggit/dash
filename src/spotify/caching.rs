@@ -254,21 +254,17 @@ mod server_only {
                     // the value needs updating by this call; update it
                     (cached, Some((guard, true))) => {
                         let key_clone = key.clone();
+                        let write_cache = async move |value, _guard| {
+                            self.write_cache(&key_clone, value).await
+
+                            // guard dropped
+                        };
                         let wrap = move |value: Self::V| {
                             Arc::new(WithLastFetched {
                                 last_fetched: now,
                                 value,
                             })
                         };
-                        let write_disk_cache =
-                            async move |value: Arc<WithLastFetched<Self::V>>,
-                                        mut guard: UpdatingGuard| {
-                                let now = UtcDateTime::now();
-
-                                self.write_cache(&key_clone, value).await
-
-                                // guard dropped
-                            };
 
                         match cached {
                             // fetch and write new value to cache in the background
@@ -277,9 +273,7 @@ mod server_only {
                                 tokio::spawn(async move {
                                     match f(key, Some(clone)).await {
                                         Ok(value) => {
-                                            if let Err(e) =
-                                                write_disk_cache(wrap(value), guard).await
-                                            {
+                                            if let Err(e) = write_cache(wrap(value), guard).await {
                                                 error!("Failed to write to disk cache: {e}")
                                             }
                                         }
@@ -293,9 +287,7 @@ mod server_only {
                             None => match f(key, None).await {
                                 Ok(value) => {
                                     let wrapped = wrap(value);
-                                    if let Err(e) =
-                                        write_disk_cache(Arc::clone(&wrapped), guard).await
-                                    {
+                                    if let Err(e) = write_cache(Arc::clone(&wrapped), guard).await {
                                         error!("Failed to write to disk cache: {e}")
                                     }
 
@@ -355,7 +347,7 @@ mod server_only {
 
     pub struct Updating(AtomicBool);
     impl Updating {
-        fn try_claim(&self) -> Option<UpdatingGuard> {
+        fn try_claim(&self) -> Option<UpdatingGuard<'_>> {
             self.0
                 .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
@@ -402,14 +394,14 @@ mod server_only {
 
         fn read_mem_cache(
             &self,
-            key: &Self::K,
+            _: &Self::K,
         ) -> impl Future<Output = Option<Arc<WithLastFetched<Self::V>>>> + Send {
-            async { self.cache.read().await.as_ref().map(|arc| Arc::clone(&arc)) }
+            async { self.cache.read().await.as_ref().map(|arc| Arc::clone(arc)) }
         }
 
         fn write_mem_cache(
             &self,
-            key: &Self::K,
+            _: &Self::K,
             value: Arc<WithLastFetched<Self::V>>,
         ) -> impl Future<Output = ()> + Send {
             async {
@@ -440,7 +432,7 @@ mod server_only {
             // read-lock fastpath
             {
                 let read_guard = self.updating.read().await;
-                if let Some(&updating) = read_guard.get(&key) {
+                if let Some(&updating) = read_guard.get(key) {
                     return updating;
                 }
             }
@@ -449,7 +441,7 @@ mod server_only {
             let mut write_guard = self.updating.write().await;
 
             // double-check to avoid unused leak
-            if let Some(&updating) = write_guard.get(&key) {
+            if let Some(&updating) = write_guard.get(key) {
                 return updating;
             }
 
@@ -468,15 +460,15 @@ mod server_only {
 
         fn read_mem_cache(
             &self,
-            key: &Self::K,
+            _key: &Self::K,
         ) -> impl Future<Output = Option<Arc<WithLastFetched<Self::V>>>> + Send {
             async { None }
         }
 
         fn write_mem_cache(
             &self,
-            key: &Self::K,
-            value: Arc<WithLastFetched<Self::V>>,
+            _key: &Self::K,
+            _value: Arc<WithLastFetched<Self::V>>,
         ) -> impl Future<Output = ()> + Send {
             async {}
         }

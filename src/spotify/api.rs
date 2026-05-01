@@ -209,9 +209,9 @@ caching!(
 
         let spotify = spotify().await.clone();
         let playlists = &rating_playlists_server().await.value;
-        let mut previous = previous.unwrap_or_default().value.clone();
-        let previous_snapshot_ids = previous.playlist_snapshot_ids;
-        let mut ratings = previous.tracks;
+        let previous = &previous.unwrap_or_default().value;
+        let previous_snapshot_ids = previous.playlist_snapshot_ids.clone();
+        let mut ratings = previous.tracks.clone();
 
         trace!("Getting ratings");
 
@@ -382,10 +382,10 @@ pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> 
     } else {
         use std::sync::Arc;
 
-        let mut with_last_fetched =
-            Arc::map(QUEUE.read_cache(&()).await.unwrap_or_default(), |wlf| {
-                let mut wlf = wlf.clone();
-                wlf.value.insert(
+        let res = QUEUE
+            .update_cache(&(), |queue| {
+                let mut queue = queue.cloned().unwrap_or_default();
+                queue.insert(
                     0,
                     // dummy item with id set
                     PlayableItem::Track(FullTrack {
@@ -410,10 +410,11 @@ pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> 
                         r#type: Type::Track,
                     }),
                 );
-                wlf
-            });
+                Some(queue)
+            })
+            .await;
 
-        if let Err(e) = QUEUE.write_cache(&(), with_last_fetched).await {
+        if let Err(e) = res {
             warn!("Failed to add newly inserted queue item to disk cache: {e}");
         }
 
@@ -504,16 +505,22 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
     .context("Failed to create rating playlist")?;
     let playlist = simplified_playlist(&playlist);
 
-    let mut ret = RATING_PLAYLISTS
+    let ret = RATING_PLAYLISTS
         .update_cache(&(), |playlists| {
-            let mut playlists = playlists.cloned().unwrap_or_default();
+            let playlists = match playlists {
+                Some(playlists) => playlists,
+                None => &Vec::new(),
+            };
             if !playlists
                 .iter()
                 .any(|(playlist_rating, _)| *playlist_rating == rating)
             {
+                let mut playlists = playlists.clone();
                 playlists.push((rating, playlist.clone()));
+                Some(playlists)
+            } else {
+                None // no update needed
             }
-            Some(playlists)
         })
         .await;
 
