@@ -556,6 +556,8 @@ async fn update_rating_caches(
     track: &FullTrack,
     rating: f32,
 ) -> Result<f32> {
+    use std::sync::Arc;
+
     use crate::spotify::{
         analyze::{DEFAULT_RATING, analyze},
         caching::WithLastFetched,
@@ -601,39 +603,34 @@ async fn update_rating_caches(
         warn!("Failed to update playlist items to disk cache: {e}")
     }
 
-    let mut canonical_rating = DEFAULT_RATING; // should get overwritten by closure
-    let ret = RATINGS
-        .update_cache(&(), |cached_ratings| {
-            let mut cached_ratings = cached_ratings.cloned().unwrap_or_default();
+    let mut cached_ratings =
+        Arc::unwrap_or_clone(RATINGS.read_cache(&()).await.unwrap_or_default());
 
-            let tracks = &mut cached_ratings.tracks;
-            let entry = match tracks
-                .iter_mut()
-                .find(|(cached_track, _)| cached_track.id.as_ref() == track.id.as_ref())
-            {
-                Some((_, analyzation)) => analyzation,
-                None => {
-                    &mut tracks
-                        .push_mut((track.clone(), TrackAnalyzation::default()))
-                        .1
-                }
-            };
-            entry.rating_history.push((UtcDateTime::now(), rating));
+    let tracks = &mut cached_ratings.value.tracks;
+    let entry = match tracks
+        .iter_mut()
+        .find(|(cached_track, _)| cached_track.id.as_ref() == track.id.as_ref())
+    {
+        Some((_, analyzation)) => analyzation,
+        None => {
+            &mut tracks
+                .push_mut((track.clone(), TrackAnalyzation::default()))
+                .1
+        }
+    };
+    entry.rating_history.push((UtcDateTime::now(), rating));
 
-            cached_ratings = tokio::runtime::Handle::current().block_on(analyze(tracks.clone()));
+    cached_ratings.value = analyze(tracks.clone()).await;
 
-            canonical_rating = cached_ratings.rating(
-                track
-                    .id
-                    .as_ref()
-                    .expect("full track used for rating updates should have an id")
-                    .as_ref(),
-            );
+    let canonical_rating = cached_ratings.value.rating(
+        track
+            .id
+            .as_ref()
+            .expect("full track used for rating updates should have an id")
+            .as_ref(),
+    );
 
-            Some(cached_ratings)
-        })
-        .await;
-    if let Err(e) = ret {
+    if let Err(e) = RATINGS.write_cache(&(), Arc::new(cached_ratings)).await {
         warn!("Failed to update ratings disk cache: {e}");
     }
 

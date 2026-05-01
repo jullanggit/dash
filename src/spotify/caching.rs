@@ -37,7 +37,7 @@ macro_rules! caching {
             interval: $interval,
             name: stringify!($fn_name),
             updating: crate::spotify::caching::Updating::default(),
-            cache: arc_swap::ArcSwapOption::const_empty(),
+            cache: tokio::sync::RwLock::const_new(None),
         };
 
         /// Server-only function, returns output directly
@@ -110,7 +110,6 @@ pub use server_only::*;
 
 #[cfg(feature = "server")]
 mod server_only {
-    use arc_swap::ArcSwapOption;
     use dioxus::prelude::*;
     use serde::{Deserialize, Serialize, de::DeserializeOwned};
     use std::{
@@ -172,14 +171,17 @@ mod server_only {
         fn updating(&self, key: &Self::K) -> impl Future<Output = &Updating> + Send;
         fn interval(&self) -> Duration;
         fn disk_cache_path(&self, key: &Self::K) -> Option<PathBuf>;
-        fn read_mem_cache(&self, key: &Self::K) -> Option<Arc<WithLastFetched<Self::V>>>;
+        fn read_mem_cache(
+            &self,
+            key: &Self::K,
+        ) -> impl Future<Output = Option<Arc<WithLastFetched<Self::V>>>> + Send;
 
         fn read_cache(
             &self,
             key: &Self::K,
         ) -> impl Future<Output = Option<Arc<WithLastFetched<Self::V>>>> + Send {
             async {
-                let mem = self.read_mem_cache(key);
+                let mem = self.read_mem_cache(key).await;
                 if mem.is_some() {
                     return mem;
                 };
@@ -190,14 +192,18 @@ mod server_only {
             }
         }
 
-        fn write_mem_cache(&self, key: &Self::K, value: Arc<WithLastFetched<Self::V>>);
+        fn write_mem_cache(
+            &self,
+            key: &Self::K,
+            value: Arc<WithLastFetched<Self::V>>,
+        ) -> impl Future<Output = ()> + Send;
         fn write_cache(
             &self,
             key: &Self::K,
             value: Arc<WithLastFetched<Self::V>>,
         ) -> impl Future<Output = anyhow::Result<()>> + Send {
             async move {
-                self.write_mem_cache(key, Arc::clone(&value));
+                self.write_mem_cache(key, Arc::clone(&value)).await;
 
                 // disk cache
                 let path = self
@@ -372,7 +378,7 @@ mod server_only {
         pub updating: Updating,
         pub interval: Duration,
         pub name: &'static str,
-        pub cache: ArcSwapOption<WithLastFetched<V>>,
+        pub cache: RwLock<Option<Arc<WithLastFetched<V>>>>,
     }
     impl<V> Cache for SingleValueCache<V>
     where
@@ -394,12 +400,21 @@ mod server_only {
             })
         }
 
-        fn read_mem_cache(&self, _: &Self::K) -> Option<Arc<WithLastFetched<Self::V>>> {
-            self.cache.load_full()
+        fn read_mem_cache(
+            &self,
+            key: &Self::K,
+        ) -> impl Future<Output = Option<Arc<WithLastFetched<Self::V>>>> + Send {
+            async { self.cache.read().await.as_ref().map(|arc| Arc::clone(&arc)) }
         }
 
-        fn write_mem_cache(&self, _: &Self::K, value: Arc<WithLastFetched<Self::V>>) {
-            self.cache.swap(Some(value));
+        fn write_mem_cache(
+            &self,
+            key: &Self::K,
+            value: Arc<WithLastFetched<Self::V>>,
+        ) -> impl Future<Output = ()> + Send {
+            async {
+                *self.cache.write().await = Some(value);
+            }
         }
     }
 
@@ -451,10 +466,19 @@ mod server_only {
             })
         }
 
-        // TODO: implement cache
-        fn read_mem_cache(&self, _key: &Self::K) -> Option<Arc<WithLastFetched<Self::V>>> {
-            None
+        fn read_mem_cache(
+            &self,
+            key: &Self::K,
+        ) -> impl Future<Output = Option<Arc<WithLastFetched<Self::V>>>> + Send {
+            async { None }
         }
-        fn write_mem_cache(&self, _key: &Self::K, _value: Arc<WithLastFetched<Self::V>>) {}
+
+        fn write_mem_cache(
+            &self,
+            key: &Self::K,
+            value: Arc<WithLastFetched<Self::V>>,
+        ) -> impl Future<Output = ()> + Send {
+            async {}
+        }
     }
 }
