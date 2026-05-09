@@ -36,7 +36,7 @@ macro_rules! caching {
         static $const: crate::spotify::caching::SingleValueCache<$return> = crate::spotify::caching::SingleValueCache {
             interval: $interval,
             name: stringify!($fn_name),
-            updating: crate::spotify::caching::Updating::default(),
+            updating: tokio::sync::Semaphore::const_new(1),
             cache: tokio::sync::RwLock::const_new(None),
         };
 
@@ -128,7 +128,7 @@ mod server_only {
     use time::{Duration, UtcDateTime};
     use tokio::{
         fs,
-        sync::{Mutex, RwLock, TryLockError},
+        sync::{Mutex, RwLock, Semaphore, TryLockError},
         time::{Duration as TokioDuration, sleep},
     };
 
@@ -168,7 +168,7 @@ mod server_only {
         type K: CacheKey;
         type V: CacheValue;
 
-        fn updating(&self, key: &Self::K) -> impl Future<Output = &Updating> + Send;
+        fn updating(&self, key: &Self::K) -> impl Future<Output = &Semaphore> + Send;
         fn interval(&self) -> Duration;
         fn disk_cache_path(&self, key: &Self::K) -> Option<PathBuf>;
         fn read_mem_cache(
@@ -194,7 +194,7 @@ mod server_only {
 
                 match disk {
                     Some(value) => {
-                        self.write_mem_cache(key, value).await; // populate in-memory cache
+                        self.write_mem_cache(key, Arc::clone(&value)).await; // populate in-memory cache
                         Some(value)
                     }
                     None => None,
@@ -246,9 +246,10 @@ mod server_only {
             async move {
                 let now = UtcDateTime::now();
 
+                let guard = self.updating(&key).await.try_acquire().ok();
                 let cached = self.read_cache(&key).await;
                 // (guard, needs update)
-                let update = self.updating(&key).await.try_claim().map(|guard| {
+                let update = guard.map(|guard| {
                     (
                         guard,
                         cached
@@ -355,29 +356,8 @@ mod server_only {
         }
     }
 
-    pub struct Updating(AtomicBool);
-    impl Updating {
-        fn try_claim(&self) -> Option<UpdatingGuard<'_>> {
-            self.0
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-                .then_some(UpdatingGuard(&self.0))
-        }
-    }
-    impl const Default for Updating {
-        fn default() -> Self {
-            Self(AtomicBool::new(false))
-        }
-    }
-    struct UpdatingGuard<'a>(&'a AtomicBool);
-    impl<'a> Drop for UpdatingGuard<'a> {
-        fn drop(&mut self) {
-            self.0.store(false, Ordering::Release);
-        }
-    }
-
     pub struct SingleValueCache<V> {
-        pub updating: Updating,
+        pub updating: Semaphore,
         pub interval: Duration,
         pub name: &'static str,
         pub cache: RwLock<Option<Arc<WithLastFetched<V>>>>,
@@ -392,7 +372,7 @@ mod server_only {
         fn interval(&self) -> Duration {
             self.interval
         }
-        async fn updating(&self, _: &()) -> &Updating {
+        async fn updating(&self, _: &()) -> &Semaphore {
             &self.updating
         }
         fn disk_cache_path(&self, _: &Self::K) -> Option<PathBuf> {
@@ -421,7 +401,7 @@ mod server_only {
     }
 
     pub struct HashmapCache<K, V> {
-        pub updating: LazyLock<RwLock<HashMap<K, &'static Updating>>>,
+        pub updating: LazyLock<RwLock<HashMap<K, &'static Semaphore>>>,
         pub interval: Duration,
         pub name: &'static str,
         pub _v: PhantomData<V>,
@@ -438,7 +418,7 @@ mod server_only {
             self.interval
         }
 
-        async fn updating(&self, key: &Self::K) -> &Updating {
+        async fn updating(&self, key: &Self::K) -> &Semaphore {
             // read-lock fastpath
             {
                 let read_guard = self.updating.read().await;
@@ -455,7 +435,7 @@ mod server_only {
                 return updating;
             }
 
-            let value = Box::leak(Box::new(Updating::default())); // leaking is fine as the collection is append-only anyways
+            let value = Box::leak(Box::new(Semaphore::new(1))); // leaking is fine as the collection is append-only anyways
 
             write_guard.insert(key.clone(), value);
             value
