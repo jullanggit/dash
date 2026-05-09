@@ -206,6 +206,8 @@ caching!(
         use crate::spotify::analyze::analyze;
         use std::collections::HashMap;
 
+        println!("[RATINGS] update started, previous={}", previous.is_some());
+
         let spotify = spotify().await.clone();
         let playlists = &rating_playlists_server().await.value;
         let previous = &previous.unwrap_or_default().value;
@@ -281,6 +283,7 @@ caching!(
 
         let mut analyzation = analyze(ratings).await;
         analyzation.playlist_snapshot_ids = current_snapshot_ids;
+        println!("[RATINGS] update finished");
         Ok(analyzation)
     },
     RATINGS,

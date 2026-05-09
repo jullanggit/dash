@@ -12,7 +12,8 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[cfg(feature = "server")]
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "_rjem_malloc_conf")]
-pub static malloc_conf: &[u8] = b"dirty_decay_ms:0,muzzy_decay_ms:0,lg_dirty_mult:4\0";
+pub static malloc_conf: &[u8] =
+    b"prof:true,prof_active:true,lg_prof_sample:19,dirty_decay_ms:0,muzzy_decay_ms:0,lg_dirty_mult:4\0";
 
 // The dioxus prelude contains a ton of common items used in dioxus apps. It's a good idea to import wherever you
 // need dioxus
@@ -87,4 +88,35 @@ fn App() -> Element {
         // the layouts and components for the active route.
         Router::<Route> {}
     }
+}
+
+#[get("/heap_profile")]
+async fn dump_heap_profile() -> Result<()> {
+    fn require_profiling_activated(
+        prof_ctl: &jemalloc_pprof::JemallocProfCtl,
+    ) -> Result<(), &'static str> {
+        if prof_ctl.activated() {
+            Ok(())
+        } else {
+            Err("heap profiling not activated")
+        }
+    }
+
+    let mut prof_ctl = jemalloc_pprof::PROF_CTL.as_ref().unwrap().lock().await;
+    require_profiling_activated(&prof_ctl).unwrap();
+
+    let pprof = prof_ctl
+        .dump_pprof()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+        .unwrap();
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let filename = format!("/tmp/heap_profile_{}.prof", timestamp);
+
+    std::fs::write(filename, pprof);
+
+    Ok(())
 }

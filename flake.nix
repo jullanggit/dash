@@ -48,6 +48,7 @@
               configureFlags = (oldAttrs.configureFlags or [ ]) ++ [
                 "--with-jemalloc-prefix=_rjem_"
                 "--with-private-namespace=_rjem_"
+                "--enable-prof"
               ];
             });
           in

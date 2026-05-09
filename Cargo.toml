@@ -15,6 +15,7 @@ charming = { version = "0.6.0", optional = true }
 dioxus = { version = "0.7.1", features = ["fullstack", "router"] }
 dioxus-sdk-time = "0.7.0"
 futures = { version = "0.3.32", default-features = false }
+jemalloc_pprof = { version = "0.8.2", optional = true, features = ["symbolize"] }
 rand = { version = "0.10.0", optional = true }
 rand_core = { version = "0.6.4", features = ["getrandom"], optional = true }
 rspotify = { git = "https://github.com/jullanggit/rspotify", default-features = false, features = [
@@ -28,7 +29,7 @@ rspotify-model = { git = "https://github.com/jullanggit/rspotify" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 structstruck = "0.5.1"
-tikv-jemallocator = {version = "0.6.1", optional = true}
+tikv-jemallocator = {version = "0.6.1", optional = true, features = ["profiling"]}
 time = { version = "0.3.47", features = ["parsing", "serde"] }
 tokio = { version = "1.50.0", default-features = false, features = [
   "fs",
@@ -53,7 +54,11 @@ server = [
   "dep:rspotify-http",
   "dep:tokio",
   "dep:tikv-jemallocator",
+  "dep:jemalloc_pprof",
   "dioxus/server",
 ]
 # The feature that are only required for the web = ["dioxus/web"] build target should be optional and only enabled in the web = ["dioxus/web"] feature
 web = ["dioxus/web"]
+
+[profile.release]
+debug = 1
