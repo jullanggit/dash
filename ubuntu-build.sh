@@ -55,5 +55,5 @@ podman run --rm -it \
     fi
 
     # ---- Build: cargo registry, git deps, and target/ are all cached ----
-    "$DX_BIN" bundle --web --release
+    "$DX_BIN" bundle @client --web --release --debug-symbols=false @server --server --release
 '
