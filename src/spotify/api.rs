@@ -48,7 +48,7 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
             let spotify = AuthCodeSpotify::with_config(
                 Credentials::from_env().expect("Failed to get credentials"),
                 OAuth {
-                    redirect_uri: "http://127.0.0.1:8888".into(), // TODO: get the actual url
+                    redirect_uri: "http://127.0.0.1:8888".into(),
                     scopes: scopes!(
                         "user-read-playback-state",
                         "playlist-read-private",
@@ -198,7 +198,6 @@ where
     }
 }
 
-// TODO: also search from the back for new items
 caching!(
     ratings,
     Analyzation,
@@ -425,7 +424,7 @@ pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> 
 caching!(
     recently_played,
     Vec<PlayHistory>,
-    // TODO: maybe use previous
+    // TODO: also consider currently playing song as recently played
     |_, _| async move {
         trace!("Getting queue");
 

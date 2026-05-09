@@ -84,8 +84,6 @@ pub async fn handle_weighted_playback() -> ! {
     }
 }
 
-// TODO:
-// - only add a song to queue if it is empty
 #[cfg(feature = "server")]
 async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) {
     use crate::spotify::recently_played_server;
@@ -95,8 +93,6 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
     };
 
     use rspotify_model::{FullTrack, PlayableItem};
-
-    let _spotify = spotify().await.clone();
 
     let queue = queue_server().await;
     let num_in_queue = |track_id| {
