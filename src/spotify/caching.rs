@@ -186,9 +186,19 @@ mod server_only {
                     return mem;
                 };
 
-                serde_json::from_str(&fs::read_to_string(self.disk_cache_path(key)?).await.ok()?)
-                    .ok()
-                    .map(Arc::new)
+                let disk = serde_json::from_str(
+                    &fs::read_to_string(self.disk_cache_path(key)?).await.ok()?,
+                )
+                .ok()
+                .map(Arc::new);
+
+                match disk {
+                    Some(value) => {
+                        self.write_mem_cache(key, value).await; // populate in-memory cache
+                        Some(value)
+                    }
+                    None => None,
+                }
             }
         }
 
