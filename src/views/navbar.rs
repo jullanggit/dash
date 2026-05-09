@@ -24,7 +24,6 @@ pub fn Navbar() -> Element {
         document::Link { rel: "stylesheet", href: NAVBAR_CSS }
 
         div { id: "navbar",
-            Link { to: Route::Home {}, "Home" }
             Link { to: Route::Spotify {}, "Spotify" }
         }
 

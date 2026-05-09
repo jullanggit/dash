@@ -19,7 +19,7 @@ pub fn Login() -> Element {
                         match auth::login(submitted_password).await {
                             Ok(()) => {
                                 error.set(None);
-                                nav.push(Route::Home {});
+                                nav.push(Route::Spotify {});
                             }
                             Err(e) => error.set(Some(format!("unauthenticated: {e}"))),
                         }

@@ -19,7 +19,7 @@ pub static malloc_conf: &[u8] = b"dirty_decay_ms:0,muzzy_decay_ms:0,lg_dirty_mul
 use dioxus::prelude::*;
 #[cfg(feature = "login")]
 use views::Login;
-use views::{Home, Navbar, Spotify};
+use views::{Navbar, Spotify};
 
 /// Define a components module that contains all shared components for our app.
 mod auth;
@@ -43,15 +43,9 @@ enum Route {
     // The layout attribute defines a wrapper for all routes under the layout. Layouts are great for wrapping
     // many routes with a common UI like a navbar.
     #[layout(Navbar)]
-        // The route attribute defines the URL pattern that a specific route matches. If that pattern matches the URL,
-        // the component for that route will be rendered. The component name that is rendered defaults to the variant name.
-        #[route("/")]
-        Home {},
-        // The route attribute can include dynamic parameters that implement [`std::str::FromStr`] and [`std::fmt::Display`] with the `:` syntax.
-        // In this case, id will match any integer like `/blog/123` or `/blog/-456`.
-        #[route("/spotify")]
         // Fields of the route variant will be passed to the component as props. In this case, the blog component must accept
         // an `id` prop of type `i32`.
+        #[route("/")]
         Spotify {}
 }
 
