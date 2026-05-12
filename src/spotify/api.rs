@@ -345,7 +345,7 @@ caching!(
         .await?)
     },
     PLAYBACK_STATE,
-    Duration::seconds(1)
+    Duration::seconds(2)
 );
 
 caching!(
@@ -363,7 +363,7 @@ caching!(
         .queue)
     },
     QUEUE,
-    Duration::seconds(1)
+    Duration::seconds(2)
 );
 #[cfg(feature = "server")]
 pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> {
@@ -437,7 +437,7 @@ caching!(
         .items)
     },
     RECENTLY_PLAYED,
-    Duration::seconds(1)
+    Duration::seconds(3)
 );
 
 #[cfg(feature = "server")]
