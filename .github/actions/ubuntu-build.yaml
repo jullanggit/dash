@@ -1,0 +1,82 @@
+name: Build Ubuntu Binary
+
+on:
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # System deps
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -o Acquire::CompressionTypes::Order::=gz
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev curl ca-certificates
+
+      # Rust nightly + wasm target
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Cache cargo registry, git deps, and target/
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: dioxus-fullstack
+          cache-directories: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+
+      # Install pinned dx CLI (v0.7.3)
+      - name: Install Dioxus CLI
+        run: |
+          DX_DIR="$HOME/.dx"
+          mkdir -p "$DX_DIR"
+          if [ ! -x "$DX_DIR/dx" ]; then
+            curl -L --retry 3 -o "$DX_DIR/dx.tar.gz" \
+              https://github.com/DioxusLabs/dioxus/releases/download/v0.7.3/dx-x86_64-unknown-linux-gnu.tar.gz
+            tar -xf "$DX_DIR/dx.tar.gz" -C "$DX_DIR"
+            rm -f "$DX_DIR/dx.tar.gz"
+          fi
+          echo "$DX_DIR" >> "$GITHUB_PATH"
+          dx --version
+
+      - name: Build release bundle
+        run: |
+          dx bundle @client --web --release --debug-symbols=false @server --server --release
+
+      # Locate outputs (target/dx/<app-name>/release/web/...)
+      - name: Locate build outputs
+        id: locate
+        run: |
+          SERVER_BIN=$(find target/dx -type f -name dash -executable | head -n 1)
+          PUBLIC_DIR=$(find target/dx -type d -name public | head -n 1)
+          echo "server_bin=$SERVER_BIN" >> "$GITHUB_OUTPUT"
+          echo "public_dir=$PUBLIC_DIR" >> "$GITHUB_OUTPUT"
+          echo "Found server binary: $SERVER_BIN"
+          echo "Found public dir:    $PUBLIC_DIR"
+
+      # Upload the ubuntu-runnable server binary
+      - name: Upload server binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-binary
+          path: ${{ steps.locate.outputs.server_bin }}
+          if-no-files-found: error
+
+      # Upload static web assets (needed to actually run the fullstack app)
+      - name: Upload web assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-assets
+          path: ${{ steps.locate.outputs.public_dir }}
+          if-no-files-found: warn
