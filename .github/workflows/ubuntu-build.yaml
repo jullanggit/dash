@@ -3,6 +3,10 @@ name: Build Ubuntu Binary
 on:
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "assets/**"
+      - ".github/workflows/ubuntu-build.yml"
 
 env:
   CARGO_TERM_COLOR: always
