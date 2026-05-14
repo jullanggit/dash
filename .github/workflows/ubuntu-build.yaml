@@ -6,7 +6,7 @@ on:
     paths:
       - "src/**"
       - "assets/**"
-      - ".github/workflows/ubuntu-build.yml"
+      - ".github/workflows/ubuntu-build.yaml"
   workflow_dispatch:
 
 env:
