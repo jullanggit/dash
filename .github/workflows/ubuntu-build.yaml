@@ -53,7 +53,6 @@ jobs:
             rm -f "$DX_DIR/dx.tar.gz"
           fi
           echo "$DX_DIR" >> "$GITHUB_PATH"
-          dx --version
 
       - name: Build release bundle
         run: |
