@@ -50,17 +50,12 @@ macro_rules! RequestPermits {
         )*
 
         #[cfg(feature = "server")]
+        #[derive(Debug, Clone, Copy)]
         enum RequestPermit {
             $($path),*
         }
+        #[cfg(feature = "server")]
         impl RequestPermit {
-            fn semaphore(&self) -> &'static Semaphore {
-                match self {
-                    $(
-                        Self::$path => &${concat(_, $path, _request_permit)}
-                    ),*
-                }
-            }
             /// Acquire the permit, wrapping the error in a spicetify-compatible type
             async fn acquire(&self) -> ClientResult<SemaphorePermit<'static>> {
                 match self {
@@ -85,7 +80,9 @@ RequestPermits!(
     // /track
     Tracks,
     // /artists
-    Artists
+    Artists,
+    // /me
+    Me
 );
 
 // TODO: read credentials from config file (possibly with indirection for secrets) instead form .env
@@ -143,16 +140,18 @@ caching!(
 
         trace!("Getting rating playlists");
 
-        let mut response = paginate_retrying(move |offset| {
-            let spotify = spotify.clone();
-            async move {
-                let permit = RequestPermit::MyPlaylists.acquire().await?;
-                trace!("[SPOTIFY API LOG] current user playlists, offset {offset}");
-                spotify
-                    .current_user_playlists_manual(None, Some(offset))
-                    .await
-            }
-        })
+        let mut response = paginate_retrying(
+            move |offset| {
+                let spotify = spotify.clone();
+                async move {
+                    trace!("[SPOTIFY API LOG] current user playlists, offset {offset}");
+                    spotify
+                        .current_user_playlists_manual(None, Some(offset))
+                        .await
+                }
+            },
+            RequestPermit::MyPlaylists,
+        )
         .await;
 
         while let Some(result) = response.next().await {
@@ -179,7 +178,10 @@ caching!(
 /// Paginates the given function, retrying any too-many-request errors.
 /// Returns early if any other errors are encountered.
 #[cfg(feature = "server")]
-async fn paginate_retrying<F, Fut, T>(f: F) -> Pin<Box<impl Stream<Item = ClientResult<T>>>>
+async fn paginate_retrying<F, Fut, T>(
+    f: F,
+    permit: RequestPermit,
+) -> Pin<Box<impl Stream<Item = ClientResult<T>>>>
 where
     F: Fn(u32) -> Fut,
     Fut: Future<Output = ClientResult<Page<T>>>,
@@ -188,7 +190,7 @@ where
     let mut offset = 0;
     Box::pin(async_stream::stream! {
         loop {
-            let page = retrying(&f, offset).await?;
+            let page = retrying(&f, offset, permit).await?;
 
             offset += page.items.len() as u32;
             let end = page.next.is_none() || page.items.is_empty();
@@ -207,7 +209,7 @@ where
 /// Retries `f` if it got a too-many-requests error.
 /// Suspends for the duration requested by the spotify API, which may be a long period of time.
 #[cfg(feature = "server")]
-pub async fn retrying<F, Args, Fut, T>(f: F, args: Args) -> ClientResult<T>
+pub async fn retrying<F, Args, Fut, T>(f: F, args: Args, permit: RequestPermit) -> ClientResult<T>
 where
     F: Fn(Args) -> Fut,
     Args: Clone,
@@ -215,6 +217,7 @@ where
     T: DeserializeOwned + Debug,
 {
     let mut num_tries = 0;
+    let permit = permit.acquire().await?;
     loop {
         let res = f(args.clone()).await;
         if let Err(ClientError::Http(ref http)) = res
@@ -280,17 +283,19 @@ caching!(
             }
 
             let spotify_clone = spotify.clone();
-            let mut items = paginate_retrying(move |offset| {
-                let spotify = spotify_clone.clone();
-                let id = playlist.id.clone();
-                async move {
-                    let permit = RequestPermit::Playlists.acquire().await?;
-                    trace!("[SPOTIFY API LOG] playlist items, id {id}, offset {offset}");
-                    spotify
-                        .playlist_items_manual(id, None, None, None, Some(offset))
-                        .await
-                }
-            })
+            let mut items = paginate_retrying(
+                move |offset| {
+                    let spotify = spotify_clone.clone();
+                    let id = playlist.id.clone();
+                    async move {
+                        trace!("[SPOTIFY API LOG] playlist items, id {id}, offset {offset}");
+                        spotify
+                            .playlist_items_manual(id, None, None, None, Some(offset))
+                            .await
+                    }
+                },
+                RequestPermit::Playlists,
+            )
             .await;
 
             // assumptions:
@@ -352,16 +357,18 @@ caching!(
 
         trace!("Getting saved tracks");
 
-        let mut items = paginate_retrying(move |offset| {
-            let spotify = spotify.clone();
-            async move {
-                let permit = RequestPermit::SavedTracks.acquire().await?;
-                trace!("[SPOTIFY API LOG] saved_tracks, offset {offset}");
-                spotify
-                    .current_user_saved_tracks_manual(None, None, Some(offset))
-                    .await
-            }
-        })
+        let mut items = paginate_retrying(
+            move |offset| {
+                let spotify = spotify.clone();
+                async move {
+                    trace!("[SPOTIFY API LOG] saved_tracks, offset {offset}");
+                    spotify
+                        .current_user_saved_tracks_manual(None, None, Some(offset))
+                        .await
+                }
+            },
+            RequestPermit::SavedTracks,
+        )
         .await;
 
         // assumptions:
@@ -393,11 +400,9 @@ caching!(
         let spotify = spotify().await;
 
         Ok(retrying(
-            move |_| async move {
-                let permit = RequestPermit::Player.acquire().await?;
-                spotify.current_playback(None, None::<[_; 0]>).await
-            },
+            move |_| async move { spotify.current_playback(None, None::<[_; 0]>).await },
             (),
+            RequestPermit::Player,
         )
         .await?)
     },
@@ -413,11 +418,9 @@ caching!(
 
         let spotify = spotify().await;
         Ok(retrying(
-            move |_| async move {
-                let permit = RequestPermit::Player.acquire().await?;
-                spotify.current_user_queue().await
-            },
+            move |_| async move { spotify.current_user_queue().await },
             (),
+            RequestPermit::Player,
         )
         .await?
         .queue)
@@ -432,11 +435,9 @@ pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> 
 
     let spotify = spotify().await;
     let res = retrying(
-        move |(spotify, track)| async move {
-            let permit = RequestPermit::Player.acquire().await?;
-            spotify.add_item_to_queue(track.into(), None).await
-        },
+        move |(spotify, track)| async move { spotify.add_item_to_queue(track.into(), None).await },
         (spotify, track.clone()),
+        RequestPermit::Player,
     )
     .await;
     if let Err(e) = res {
@@ -493,11 +494,9 @@ caching!(
 
         let spotify = spotify().await;
         Ok(retrying(
-            move |_| async move {
-                let permit = RequestPermit::Player.acquire().await?;
-                spotify.current_user_recently_played(None, None).await
-            },
+            move |_| async move { spotify.current_user_recently_played(None, None).await },
             (),
+            RequestPermit::Player,
         )
         .await?
         .items)
@@ -534,9 +533,13 @@ caching!(
     PrivateUser,
     |_, _| async move {
         let spotify = spotify().await;
-        retrying(move |_| async move { spotify.me().await }, ())
-            .await
-            .context("Failed to get current Spotify user")
+        retrying(
+            move |_| async move { spotify.me().await },
+            (),
+            RequestPermit::Me,
+        )
+        .await
+        .context("Failed to get current Spotify user")
     },
     USER,
     Duration::weeks(52)
@@ -560,12 +563,12 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
     let user = user_server().await;
     let playlist = retrying(
         move |(spotify, user_id, playlist_name)| async move {
-            let permit = RequestPermit::MyPlaylists.acquire().await?;
             spotify
                 .user_playlist_create(user_id.as_ref(), &playlist_name, Some(false), None, None)
                 .await
         },
         (spotify, user.value.id.as_ref(), playlist_name),
+        RequestPermit::MyPlaylists,
     )
     .await
     .context("Failed to create rating playlist")?;
@@ -615,11 +618,9 @@ async fn full_track_maybe_cached(
 
     let spotify = spotify().await;
     retrying(
-        move |(spotify, track_id)| async move {
-            let permit = RequestPermit::Tracks.acquire().await?;
-            spotify.track(track_id, None).await
-        },
+        move |(spotify, track_id)| async move { spotify.track(track_id, None).await },
         (spotify, track_id.clone()),
+        RequestPermit::Tracks,
     )
     .await
     .with_context(|| format!("Failed to fetch track {track_id}"))
@@ -742,7 +743,6 @@ pub async fn add_rating(track_id: TrackId<'static>, rating: f32) -> Result<f32> 
     let spotify = spotify().await;
     retrying(
         move |(spotify, playlist_id, track_id)| async move {
-            let permit = RequestPermit::Playlists.acquire().await?;
             spotify
                 .playlist_add_items(
                     playlist_id,
@@ -752,6 +752,7 @@ pub async fn add_rating(track_id: TrackId<'static>, rating: f32) -> Result<f32> 
                 .await
         },
         (spotify, playlist.id.clone(), track_id.clone()),
+        RequestPermit::Playlists,
     )
     .await
     .with_context(|| {
@@ -773,11 +774,9 @@ caching_hashmap!(
         let spotify = spotify().await;
 
         retrying(
-            move |artist_id| async move {
-                let permit = RequestPermit::Artists.acquire().await?;
-                spotify.artist(artist_id).await
-            },
+            move |artist_id| async move { spotify.artist(artist_id).await },
             artist_id.clone(),
+            RequestPermit::Artists,
         )
         .await
         .with_context(|| format!("Failed to get artist {artist_id}"))
@@ -815,17 +814,19 @@ caching_hashmap!(
         let spotify = spotify().await;
 
         let mut out = Vec::new();
-        let mut items = paginate_retrying(move |offset| {
-            let spotify = spotify.clone();
-            let id = playlist_id.clone();
-            async move {
-                let permit = RequestPermit::Playlists.acquire().await?;
-                trace!("[SPOTIFY API LOG] playlist items, id {id}, offset {offset}");
-                spotify
-                    .playlist_items_manual(id, None, None, None, Some(offset))
-                    .await
-            }
-        })
+        let mut items = paginate_retrying(
+            move |offset| {
+                let spotify = spotify.clone();
+                let id = playlist_id.clone();
+                async move {
+                    trace!("[SPOTIFY API LOG] playlist items, id {id}, offset {offset}");
+                    spotify
+                        .playlist_items_manual(id, None, None, None, Some(offset))
+                        .await
+                }
+            },
+            RequestPermit::Playlists,
+        )
         .await;
 
         while let Some(result) = items.next().await {
