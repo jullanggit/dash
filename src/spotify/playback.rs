@@ -87,12 +87,10 @@ pub async fn handle_weighted_playback() -> ! {
 // TODO: currently seems to be a bit buggy and add 5-11 songs to the queue before stopping.
 #[cfg(feature = "server")]
 async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) {
-    use crate::spotify::recently_played_server;
     use crate::spotify::{
         add_to_queue, playback_options_server, playback_state_server, playlist_tracks_server,
-        queue_server, ratings_server, saved_tracks_server, spotify,
+        queue_server, ratings_server, recently_played_server, saved_tracks_server, spotify,
     };
-
     use rspotify_model::{FullTrack, PlayableItem};
 
     let queue = queue_server().await;

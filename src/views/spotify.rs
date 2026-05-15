@@ -130,7 +130,9 @@ fn Player(
             _type: Type::Playlist,
             uri,
             ..
-        }) => PlaylistId::from_id(uri).ok().map(PlaylistId::into_static),
+        }) => PlaylistId::from_id(uri.strip_prefix("spotify:playlist:")?)
+            .ok()
+            .map(PlaylistId::into_static),
         _ => None,
     });
     let image = track.and_then(|track| track.album.images.first());
