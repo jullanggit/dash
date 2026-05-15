@@ -128,31 +128,39 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
     }) = context
     {
         let tracks: Option<Vec<TrackId<'_>>> = match _type {
-            Type::Playlist => match PlaylistId::from_id(uri) {
-                Ok(id) => {
-                    let id = id.into_static();
-                    if playback_options_server()
-                        .await
-                        .value
-                        .weighted_playback_enabled(&id)
-                    {
-                        Some(
-                            playlist_tracks_server(id)
-                                .await
-                                .value
-                                .iter()
-                                .filter_map(|track| track.id.clone())
-                                .collect::<Vec<_>>(),
-                        )
-                    } else {
+            Type::Playlist => {
+                let Some(id) = uri.strip_prefix("spotify:playlist:") else {
+                    error!(
+                        "_type = playlist spotify uri does not start with 'spotify:playlist:' - {uri}"
+                    );
+                    return;
+                };
+                match PlaylistId::from_id(id) {
+                    Ok(id) => {
+                        let id = id.into_static();
+                        if playback_options_server()
+                            .await
+                            .value
+                            .weighted_playback_enabled(&id)
+                        {
+                            Some(
+                                playlist_tracks_server(id)
+                                    .await
+                                    .value
+                                    .iter()
+                                    .filter_map(|track| track.id.clone())
+                                    .collect::<Vec<_>>(),
+                            )
+                        } else {
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        warn!("_type = playlist uri ({uri}) should be a playlist id: {e}");
                         None
                     }
                 }
-                Err(e) => {
-                    warn!("_type = playlist uri ({uri}) should be a playlist id: {e}");
-                    None
-                }
-            },
+            }
             Type::Collection => Some(
                 saved_tracks_server()
                     .await
