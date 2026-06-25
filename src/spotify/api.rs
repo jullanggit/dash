@@ -798,7 +798,7 @@ caching_hashmap!(
 pub async fn genres(track: &FullTrack) -> HashSet<String> {
     let mut genres = HashSet::new();
 
-    for artist in &track.artists {
+    for (i, artist) in track.artists.iter().enumerate() {
         if let Some(artist_id) = artist.id.clone().map(ArtistId::into_static) {
             let full_artist = match full_artist(artist_id).await {
                 Ok(artist) => artist,
@@ -811,23 +811,33 @@ pub async fn genres(track: &FullTrack) -> HashSet<String> {
                 genres.insert(genre.clone());
             }
         }
-    }
 
-    if let Some(artist) = track.artists.first() {
-        match lastfm_top_tags(LastFmTopTagsKey {
-            track: track.name.clone(),
-            artist: artist.name.clone(),
-        })
-        .await
-        {
+        match lastfm_artist_top_tags(artist.name.clone()).await {
             Ok(lastfm_genres) => {
                 for genre in lastfm_genres {
                     genres.insert(genre.name);
                 }
             }
-            Err(e) => error!("Failed to fetch last.fm genres: {e}"),
+            Err(e) => error!("Failed to fetch last.fm artist genres: {e}"),
         };
-    };
+
+        // only fetch track genres for the first artist
+        if i == 0 {
+            match lastfm_top_tags(LastFmTopTagsKey {
+                track: track.name.clone(),
+                artist: artist.name.clone(),
+            })
+            .await
+            {
+                Ok(lastfm_genres) => {
+                    for genre in lastfm_genres {
+                        genres.insert(genre.name);
+                    }
+                }
+                Err(e) => error!("Failed to fetch last.fm genres: {e}"),
+            };
+        }
+    }
 
     genres
 }
@@ -903,50 +913,71 @@ impl Display for LastFmTopTagsKey {
     }
 }
 
+#[cfg(feature = "server")]
+async fn lastfm_top_tags_inner(
+    key: LastFmTopTagsKey,
+    method: &str,
+) -> anyhow::Result<Vec<LastFmTag>> {
+    info!("Getting last.fm top tags for {key}");
+
+    let client = reqwest::Client::new();
+
+    retrying(
+        move |(key, client)| async move {
+            let response = client
+                .get("https://ws.audioscrobbler.com/2.0/")
+                .query(&[
+                    ("method", method),
+                    ("artist", &key.artist),
+                    ("track", &key.track),
+                    ("api_key", &LASTFM_API_KEY),
+                    ("format", "json"),
+                    ("autocorrect", "1"),
+                ])
+                .send()
+                .await
+                .map_err(|err| rspotify_http::HttpError::Client(err))?;
+            if !response.status().is_success() {
+                return Err(ClientError::from(rspotify_http::HttpError::StatusCode(
+                    response,
+                )));
+            }
+
+            Ok(response
+                .json::<LastFmTopTagsResponse>()
+                .await
+                .map_err(|err| rspotify_http::HttpError::Client(err))?
+                .toptags
+                .tag)
+        },
+        (key.clone(), client),
+        RequestPermit::LastFmTopTags,
+    )
+    .await
+    .with_context(|| format!("Failed to get last.fm top tags for {key}"))
+}
+
 caching_hashmap!(
     lastfm_top_tags,
     LastFmTopTagsKey,
     Vec<LastFmTag>,
-    |key, _| async move {
-        info!("Getting last.fm top tags for {key}");
-
-        let client = reqwest::Client::new();
-
-        retrying(
-            move |(key, client)| async move {
-                let response = client
-                    .get("https://ws.audioscrobbler.com/2.0/")
-                    .query(&[
-                        ("method", "track.getTopTags"),
-                        ("artist", &key.artist),
-                        ("track", &key.track),
-                        ("api_key", &LASTFM_API_KEY),
-                        ("format", "json"),
-                        ("autocorrect", "1"),
-                    ])
-                    .send()
-                    .await
-                    .map_err(|err| rspotify_http::HttpError::Client(err))?;
-                if !response.status().is_success() {
-                    return Err(ClientError::from(rspotify_http::HttpError::StatusCode(
-                        response,
-                    )));
-                }
-
-                Ok(response
-                    .json::<LastFmTopTagsResponse>()
-                    .await
-                    .map_err(|err| rspotify_http::HttpError::Client(err))?
-                    .toptags
-                    .tag)
-            },
-            (key.clone(), client),
-            RequestPermit::LastFmTopTags,
-        )
-        .await
-        .with_context(|| format!("Failed to get last.fm top tags for {key}"))
-    },
+    |key, _| lastfm_top_tags_inner(key, "track.getTopTags"),
     LASTFM_TOP_TAGS,
+    Duration::weeks(4) // assume artists are mostly static
+);
+
+caching_hashmap!(
+    lastfm_artist_top_tags,
+    String,
+    Vec<LastFmTag>,
+    |key, _| lastfm_top_tags_inner(
+        LastFmTopTagsKey {
+            artist: key,
+            track: String::new()
+        },
+        "artist.getTopTags"
+    ),
+    LASTFM_ARTIST_TOP_TAGS,
     Duration::weeks(4) // assume artists are mostly static
 );
 
