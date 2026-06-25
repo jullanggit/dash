@@ -8,7 +8,7 @@ use crate::{
         playback::{PlaybackOptions, PlaybackSelection},
     },
 };
-use dioxus::prelude::*;
+use dioxus::{fullstack::reqwest, prelude::*};
 #[cfg(feature = "server")]
 use futures::Stream;
 use futures::StreamExt;
@@ -19,6 +19,8 @@ use rspotify::{
     scopes,
 };
 #[cfg(feature = "server")]
+use rspotify_http::BaseHttpClient;
+#[cfg(feature = "server")]
 use rspotify_model::Page;
 use rspotify_model::{
     ArtistId, CurrentPlaybackContext, FullArtist, FullTrack, PlayHistory, PlayableId, PlayableItem,
@@ -27,7 +29,13 @@ use rspotify_model::{
 };
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
-use std::{collections::HashSet, iter, sync::OnceLock};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashSet,
+    fmt::{self, Display, Formatter},
+    iter,
+    sync::{LazyLock, OnceLock},
+};
 #[cfg(feature = "server")]
 use std::{fmt::Debug, pin::Pin};
 use time::{Duration, UtcDateTime};
@@ -82,7 +90,9 @@ RequestPermits!(
     // /artists
     Artists,
     // /me
-    Me
+    Me,
+    // last.fm track.getTopTags
+    LastFmTopTags
 );
 
 // TODO: read credentials from config file (possibly with indirection for secrets) instead form .env
@@ -843,6 +853,85 @@ caching_hashmap!(
     },
     PLAYLIST_ITEMS,
     Duration::HOUR
+);
+
+structstruck::strike!(
+    #[structstruck::each[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]]
+    pub struct LastFmTopTagsResponse {
+        toptags: pub struct LastFmTopTags {
+            tag: Vec<struct LastFmTag {
+                name: String,
+                count: u32,
+            }>,
+        },
+    }
+);
+
+static LASTFM_API_KEY: LazyLock<String> = LazyLock::new(|| {
+    let dotenv = std::fs::read_to_string(".env").expect("Please set LASTFM_API_KEY in .env");
+    dotenv
+        .lines()
+        .find_map(|line| line.strip_prefix("LASTFM_API_KEY="))
+        .expect("Please set LASTFM_API_KEY in .env")
+        .to_string()
+});
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
+struct LastFmTopTagsKey {
+    track: String,
+    artist: String,
+}
+impl Display for LastFmTopTagsKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} - {}", self.track, self.artist)
+    }
+}
+
+caching_hashmap!(
+    lastfm_top_tags,
+    LastFmTopTagsKey,
+    Vec<LastFmTag>,
+    |key, _| async move {
+        info!("Getting last.fm top tags for {key}");
+
+        let client = reqwest::Client::new();
+
+        retrying(
+            move |(key, client)| async move {
+                let response = client
+                    .get("https://ws.audioscrobbler.com/2.0/")
+                    .query(&[
+                        ("method", "track.getTopTags"),
+                        ("artist", &key.artist),
+                        ("track", &key.track),
+                        ("api_key", &LASTFM_API_KEY),
+                        ("format", "json"),
+                        ("autocorrect", "1"),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|err| rspotify_http::HttpError::Client(err))?;
+                if !response.status().is_success() {
+                    return Err(ClientError::from(rspotify_http::HttpError::StatusCode(
+                        response,
+                    )));
+                }
+
+                Ok(response
+                    .json::<LastFmTopTagsResponse>()
+                    .await
+                    .map_err(|err| rspotify_http::HttpError::Client(err))?
+                    .toptags
+                    .tag)
+            },
+            (key.clone(), client),
+            RequestPermit::LastFmTopTags,
+        )
+        .await
+        .with_context(|| format!("Failed to get last.fm top tags for {key}"))
+    },
+    LASTFM_TOP_TAGS,
+    Duration::weeks(4) // assume artists are mostly static
 );
 
 // (mis)use caching macro to periodically serialize and automatically deserialize
