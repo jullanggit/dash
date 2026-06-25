@@ -887,12 +887,14 @@ caching_hashmap!(
 structstruck::strike!(
     #[structstruck::each[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]]
     pub struct LastFmTopTagsResponse {
-        toptags: pub struct LastFmTopTags {
+        toptags: Option<pub struct LastFmTopTags {
             tag: Vec<struct LastFmTag {
                 name: String,
                 count: u32,
             }>,
-        },
+        }>,
+        error: Option<u8>,
+        message: Option<String>,
     }
 );
 
@@ -946,12 +948,20 @@ async fn lastfm_top_tags_inner(
                 )));
             }
 
-            Ok(response
+            let deserialized = response
                 .json::<LastFmTopTagsResponse>()
                 .await
-                .map_err(|err| rspotify_http::HttpError::Client(err))?
-                .toptags
-                .tag)
+                .map_err(|err| rspotify_http::HttpError::Client(err))?;
+
+            match deserialized {
+                LastFmTopTagsResponse {
+                    toptags: Some(toptags),
+                    ..
+                } => Ok(toptags.tag),
+                LastFmTopTagsResponse { error: Some(6), .. } => Ok(Vec::new()), // not found
+                LastFmTopTagsResponse { error, message, .. } => Err(ClientError::Io(std::io::Error::new(std::io::ErrorKind::Other,
+                    format!("Failed to get last.fm top tags for {key}: error={error:?} message={message:?}")))),
+            }
         },
         (key.clone(), client),
         RequestPermit::LastFmTopTags,
