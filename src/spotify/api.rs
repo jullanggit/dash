@@ -798,6 +798,12 @@ caching_hashmap!(
 pub async fn genres(track: &FullTrack) -> HashSet<String> {
     let mut genres = HashSet::new();
 
+    fn add_genres(genres: &mut HashSet<String>, new_genres: impl IntoIterator<Item = String>) {
+        for genre in new_genres {
+            genres.insert(genre.to_lowercase());
+        }
+    };
+
     for (i, artist) in track.artists.iter().enumerate() {
         if let Some(artist_id) = artist.id.clone().map(ArtistId::into_static) {
             #[cfg(feature = "server")]
@@ -810,9 +816,7 @@ pub async fn genres(track: &FullTrack) -> HashSet<String> {
                     continue;
                 }
             };
-            for genre in full_artist.genres {
-                genres.insert(genre);
-            }
+            add_genres(&mut genres, full_artist.genres);
         }
 
         #[cfg(feature = "server")]
@@ -828,9 +832,10 @@ pub async fn genres(track: &FullTrack) -> HashSet<String> {
                 Vec::new()
             }
         };
-        for genre in lastfm_artist_genres {
-            genres.insert(genre.name);
-        }
+        add_genres(
+            &mut genres,
+            lastfm_artist_genres.into_iter().map(|tag| tag.name),
+        );
 
         // only fetch track genres for the first artist
         if i == 0 {
@@ -848,18 +853,14 @@ pub async fn genres(track: &FullTrack) -> HashSet<String> {
                     Vec::new()
                 }
             };
-            for genre in lastfm_genres {
-                genres.insert(genre.name);
-            }
+            add_genres(&mut genres, lastfm_genres.into_iter().map(|tag| tag.name));
         }
 
         // cleanup
-        genres.remove(&artist.name);
         genres.remove(&artist.name.to_lowercase());
     }
 
     // cleanup
-    genres.remove(&track.name);
     genres.remove(&track.name.to_lowercase());
 
     genres
