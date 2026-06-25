@@ -837,6 +837,9 @@ pub async fn genres(track: &FullTrack) -> HashSet<String> {
                 Err(e) => error!("Failed to fetch last.fm genres: {e}"),
             };
         }
+
+        // cleanup
+        genres.remove(&artist.name);
     }
 
     genres
