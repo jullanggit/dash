@@ -97,16 +97,13 @@ fn Player(
     let genres = use_resource(move || async move {
         // let to avoid holding the 'read' across await points
         let Some(Some(CurrentPlaybackContext {
-            item: Some(PlayableItem::Track(FullTrack { artists, .. })),
+            item: Some(PlayableItem::Track(track)),
             ..
         })) = playback_state.read().clone()
         else {
             return None;
         };
-        let mut genres = genres(artists.clone())
-            .await
-            .into_iter()
-            .collect::<Vec<_>>();
+        let mut genres = genres(&track).await.into_iter().collect::<Vec<_>>();
         genres.sort();
         Some(genres)
     });

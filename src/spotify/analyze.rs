@@ -84,35 +84,31 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
 
     // track analyzations
     for i in 0..tracks.len() {
-        let artists = {
-            let (track, analyzation) = &mut tracks[i];
+        let (track, analyzation) = &mut tracks[i];
 
-            dedupe_rating_history(&mut analyzation.rating_history);
+        dedupe_rating_history(&mut analyzation.rating_history);
 
-            analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
-                .map(|i| {
-                    (
-                        analyzation.rating_history[i - 1].0,
-                        canonical_rating(
-                            analyzation
-                                .rating_history
-                                .iter()
-                                .take(i)
-                                .map(|&(time, rating)| (rating, time)),
-                        ),
-                    )
-                })
-                .collect();
-            analyzation.canonical_rating = analyzation
-                .canonical_rating_history
-                .last()
-                .map(|(_, rating)| *rating)
-                .unwrap_or(DEFAULT_RATING);
+        analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
+            .map(|i| {
+                (
+                    analyzation.rating_history[i - 1].0,
+                    canonical_rating(
+                        analyzation
+                            .rating_history
+                            .iter()
+                            .take(i)
+                            .map(|&(time, rating)| (rating, time)),
+                    ),
+                )
+            })
+            .collect();
+        analyzation.canonical_rating = analyzation
+            .canonical_rating_history
+            .last()
+            .map(|(_, rating)| *rating)
+            .unwrap_or(DEFAULT_RATING);
 
-            track.artists.clone()
-        };
-
-        tracks[i].1.genres = genres(artists).await;
+        analyzation.genres = genres(&track).await;
     }
 
     // cross-track analyzations

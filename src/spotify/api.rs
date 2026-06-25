@@ -795,11 +795,11 @@ caching_hashmap!(
     Duration::weeks(4) // assume artists are mostly static
 );
 
-pub async fn genres(artists: Vec<SimplifiedArtist>) -> HashSet<String> {
+pub async fn genres(track: &FullTrack) -> HashSet<String> {
     let mut genres = HashSet::new();
 
-    for artist in artists {
-        if let Some(artist_id) = artist.id.map(ArtistId::into_static) {
+    for artist in &track.artists {
+        if let Some(artist_id) = artist.id.clone().map(ArtistId::into_static) {
             let full_artist = match full_artist(artist_id).await {
                 Ok(artist) => artist,
                 Err(e) => {
@@ -812,6 +812,22 @@ pub async fn genres(artists: Vec<SimplifiedArtist>) -> HashSet<String> {
             }
         }
     }
+
+    if let Some(artist) = track.artists.first() {
+        match lastfm_top_tags(LastFmTopTagsKey {
+            track: track.name.clone(),
+            artist: artist.name.clone(),
+        })
+        .await
+        {
+            Ok(lastfm_genres) => {
+                for genre in lastfm_genres {
+                    genres.insert(genre.name);
+                }
+            }
+            Err(e) => error!("Failed to fetch last.fm genres: {e}"),
+        };
+    };
 
     genres
 }
