@@ -855,6 +855,7 @@ pub async fn genres(track: &FullTrack) -> HashSet<String> {
 
         // cleanup
         genres.remove(&artist.name);
+        genres.remove(&artist.name.to_lowercase());
     }
 
     genres
