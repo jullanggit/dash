@@ -800,6 +800,9 @@ pub async fn genres(track: &FullTrack) -> HashSet<String> {
 
     for (i, artist) in track.artists.iter().enumerate() {
         if let Some(artist_id) = artist.id.clone().map(ArtistId::into_static) {
+            #[cfg(feature = "server")]
+            let full_artist = full_artist_server(artist_id).await.value.clone();
+            #[cfg(not(feature = "server"))]
             let full_artist = match full_artist(artist_id).await {
                 Ok(artist) => artist,
                 Err(e) => {
@@ -808,34 +811,46 @@ pub async fn genres(track: &FullTrack) -> HashSet<String> {
                 }
             };
             for genre in full_artist.genres {
-                genres.insert(genre.clone());
+                genres.insert(genre);
             }
         }
 
-        match lastfm_artist_top_tags(artist.name.clone()).await {
-            Ok(lastfm_genres) => {
-                for genre in lastfm_genres {
-                    genres.insert(genre.name);
-                }
+        #[cfg(feature = "server")]
+        let lastfm_artist_genres = lastfm_artist_top_tags_server(artist.name.clone())
+            .await
+            .value
+            .clone();
+        #[cfg(not(feature = "server"))]
+        let lastfm_artist_genres = match lastfm_artist_top_tags(artist.name.clone()).await {
+            Ok(genres) => genres,
+            Err(e) => {
+                error!("Failed to fetch last.fm artist genres: {e}");
+                Vec::new()
             }
-            Err(e) => error!("Failed to fetch last.fm artist genres: {e}"),
         };
+        for genre in lastfm_artist_genres {
+            genres.insert(genre.name);
+        }
 
         // only fetch track genres for the first artist
         if i == 0 {
-            match lastfm_top_tags(LastFmTopTagsKey {
+            let key = LastFmTopTagsKey {
                 track: track.name.clone(),
                 artist: artist.name.clone(),
-            })
-            .await
-            {
-                Ok(lastfm_genres) => {
-                    for genre in lastfm_genres {
-                        genres.insert(genre.name);
-                    }
-                }
-                Err(e) => error!("Failed to fetch last.fm genres: {e}"),
             };
+            #[cfg(feature = "server")]
+            let lastfm_genres = lastfm_top_tags_server(key).await.value.clone();
+            #[cfg(not(feature = "server"))]
+            let lastfm_genres = match lastfm_top_tags(key).await {
+                Ok(genres) => genres,
+                Err(e) => {
+                    error!("Failed to fetch last.fm genres: {e}");
+                    Vec::new()
+                }
+            };
+            for genre in lastfm_genres {
+                genres.insert(genre.name);
+            }
         }
 
         // cleanup
