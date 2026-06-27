@@ -5,7 +5,7 @@ use crate::{
     spotify::{
         analyze::{Analyzation, RATING_OVERWRITE_WINDOW, TrackAnalyzation},
         caching::use_server_fn,
-        playback::{PlaybackOptions, PlaybackSelection},
+        playback::{PlaybackOptions, PlaybackSelection, PlaybackSource},
     },
 };
 use dioxus::{fullstack::reqwest, prelude::*};
@@ -1058,4 +1058,9 @@ pub async fn playback_selection(selection: PlaybackSelection) -> Result<()> {
 #[server]
 pub async fn playback_rating_cutoff(rating_cutoff: f32) -> Result<()> {
     update_playback_options(|options| options.rating_cutoff = rating_cutoff.clamp(0.0, 5.0)).await
+}
+
+#[server]
+pub async fn playback_source(source: PlaybackSource) -> Result<()> {
+    update_playback_options(|options| options.source = source).await
 }

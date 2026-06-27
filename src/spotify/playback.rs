@@ -15,6 +15,39 @@ use crate::spotify::analyze::Analyzation;
 use crate::spotify::analyze::DEFAULT_RATING;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PlaybackSource {
+    #[default]
+    CurrentPlaylist,
+    AllRatedTracks,
+}
+
+impl PlaybackSource {
+    pub const ALL: [Self; 2] = [Self::CurrentPlaylist, Self::AllRatedTracks];
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::CurrentPlaylist => "current-playlist",
+            Self::AllRatedTracks => "all-rated-tracks",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::CurrentPlaylist => "Current Playlist",
+            Self::AllRatedTracks => "All Rated Tracks",
+        }
+    }
+
+    pub fn from_value(value: &str) -> Option<Self> {
+        Some(match value {
+            "current-playlist" => Self::CurrentPlaylist,
+            "all-rated-tracks" => Self::AllRatedTracks,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PlaybackSelection {
     #[default]
     Everything,
@@ -25,6 +58,7 @@ pub enum PlaybackSelection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlaybackOptions {
     pub weighted_playback_playlists: HashSet<PlaylistId<'static>>,
+    pub source: PlaybackSource,
     pub selection: PlaybackSelection,
     pub rating_cutoff: f32,
 }
@@ -33,6 +67,7 @@ impl Default for PlaybackOptions {
     fn default() -> Self {
         Self {
             weighted_playback_playlists: HashSet::new(),
+            source: PlaybackSource::CurrentPlaylist,
             selection: PlaybackSelection::Everything,
             rating_cutoff: 0.0,
         }
@@ -118,77 +153,94 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
         }
     }
 
-    let context = &playback_state_server().await.value;
+    let options = &playback_options_server().await.value;
 
-    if let Some(CurrentPlaybackContext {
-        context: Some(Context { _type, uri, .. }),
-        ..
-    }) = context
-    {
-        let tracks: Option<Vec<TrackId<'_>>> = match _type {
-            Type::Playlist => {
-                let Some(id) = uri.strip_prefix("spotify:playlist:") else {
-                    error!(
-                        "_type = playlist spotify uri does not start with 'spotify:playlist:' - {uri}"
-                    );
-                    return;
-                };
-                match PlaylistId::from_id(id) {
-                    Ok(id) => {
-                        let id = id.into_static();
-                        if playback_options_server()
-                            .await
-                            .value
-                            .weighted_playback_enabled(&id)
-                        {
-                            Some(
-                                playlist_tracks_server(id)
+    let tracks: Option<Vec<TrackId<'_>>> = match options.source {
+        PlaybackSource::CurrentPlaylist => {
+            let context = &playback_state_server().await.value;
+
+            if let Some(CurrentPlaybackContext {
+                context: Some(Context { _type, uri, .. }),
+                ..
+            }) = context
+            {
+                match _type {
+                    Type::Playlist => {
+                        let Some(id) = uri.strip_prefix("spotify:playlist:") else {
+                            error!(
+                                "_type = playlist spotify uri does not start with 'spotify:playlist:' - {uri}"
+                            );
+                            return;
+                        };
+                        match PlaylistId::from_id(id) {
+                            Ok(id) => {
+                                let id = id.into_static();
+                                if playback_options_server()
                                     .await
                                     .value
-                                    .iter()
-                                    .filter_map(|track| track.id.clone())
-                                    .collect::<Vec<_>>(),
-                            )
-                        } else {
-                            None
+                                    .weighted_playback_enabled(&id)
+                                {
+                                    Some(
+                                        playlist_tracks_server(id)
+                                            .await
+                                            .value
+                                            .iter()
+                                            .filter_map(|track| track.id.clone())
+                                            .collect::<Vec<_>>(),
+                                    )
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(e) => {
+                                warn!("_type = playlist uri ({uri}) should be a playlist id: {e}");
+                                None
+                            }
                         }
                     }
-                    Err(e) => {
-                        warn!("_type = playlist uri ({uri}) should be a playlist id: {e}");
-                        None
-                    }
+                    Type::Collection => Some(
+                        saved_tracks_server()
+                            .await
+                            .value
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => None,
                 }
+            } else {
+                None
             }
-            Type::Collection => Some(
-                saved_tracks_server()
-                    .await
-                    .value
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            ),
-            _ => None,
-        };
-
-        if let Some(tracks) = tracks {
+        }
+        PlaybackSource::AllRatedTracks => {
             let ratings = &ratings_server().await.value;
-            let recently_played = &recently_played_server().await.value;
-            let options = &playback_options_server().await.value;
-            let track = choose_random_song(
-                &tracks,
-                ratings,
-                recently_played,
-                options.selection,
-                options.rating_cutoff,
-            );
+            Some(
+                ratings
+                    .tracks
+                    .iter()
+                    .filter_map(|(track, _)| track.id.clone())
+                    .collect::<Vec<_>>(),
+            )
+        }
+    };
 
-            if let Some(track) = track {
-                let res = add_to_queue(track.clone()).await;
-                if let Err(e) = res {
-                    warn!("{e}")
-                } else {
-                    *last_queued = Some((track.clone(), num_in_queue(track) + 1))
-                }
+    if let Some(tracks) = tracks {
+        let ratings = &ratings_server().await.value;
+        let recently_played = &recently_played_server().await.value;
+        let track = choose_random_song(
+            &tracks,
+            ratings,
+            recently_played,
+            options.selection,
+            options.rating_cutoff,
+        );
+
+        if let Some(track) = track {
+            let res = add_to_queue(track.clone()).await;
+            if let Err(e) = res {
+                warn!("{e}")
+            } else {
+                *last_queued = Some((track.clone(), num_in_queue(track) + 1))
             }
         }
     }

@@ -2,8 +2,8 @@ use crate::{
     assert_authenticated,
     spotify::{
         add_rating, caching::use_server_fn, genres, playback_options, playback_rating_cutoff,
-        playback_selection, rating_if_recently_rated as fetch_rating, use_playback_state,
-        weighted_playback,
+        playback_selection, playback_source, rating_if_recently_rated as fetch_rating,
+        use_playback_state, weighted_playback,
     },
 };
 use dioxus::prelude::*;
@@ -12,7 +12,7 @@ use rspotify_model::{
 };
 use time::Duration;
 
-use crate::spotify::playback::PlaybackSelection;
+use crate::spotify::playback::{PlaybackSelection, PlaybackSource};
 
 const MOBILE_BREAKPOINT_PX: u16 = 768;
 
@@ -436,15 +436,16 @@ fn PlaybackOptionsPanel(
     current_playlist_id: Option<PlaylistId<'static>>,
     playback_options: Resource<Result<crate::spotify::playback::PlaybackOptions>>,
 ) -> Element {
-    let (is_enabled, selection, rating_cutoff) = match &*playback_options.read() {
+    let (is_enabled, source, selection, rating_cutoff) = match &*playback_options.read() {
         Some(Ok(options)) => (
             current_playlist_id
                 .as_ref()
                 .is_some_and(|playlist_id| options.weighted_playback_enabled(playlist_id)),
+            options.source,
             options.selection,
             options.rating_cutoff,
         ),
-        _ => (false, PlaybackSelection::Everything, 0.0),
+        _ => (false, PlaybackSource::CurrentPlaylist, PlaybackSelection::Everything, 0.0),
     };
     let is_pending = playback_options.pending();
 
@@ -528,9 +529,55 @@ fn PlaybackOptionsPanel(
                     gap: 16px;
                 ",
                 label {
-                    r#for: "playback-selection",
+                    r#for: "playback-source",
                     style: "font-weight: 600; white-space: nowrap;",
                     "Play"
+                }
+                select {
+                    id: "playback-source",
+                    disabled: is_pending,
+                    value: source.value(),
+                    style: "
+                        flex: 1;
+                        min-width: 0;
+                        padding: 10px 12px;
+                        border-radius: 10px;
+                        border: 1px solid #2f2f2f;
+                        background: #161616;
+                        color: #f5f5f5;
+                    ",
+                    onchange: move |event| {
+                        let value = event.value();
+                        async move {
+                            let Some(source) = PlaybackSource::from_value(&value) else {
+                                return;
+                            };
+                            if let Err(error) = playback_source(source).await {
+                                error!("Failed to update playback source: {error}");
+                            }
+                            playback_options.restart();
+                        }
+                    },
+                    for source_option in PlaybackSource::ALL {
+                        option {
+                            value: source_option.value(),
+                            selected: source_option == source,
+                            "{source_option.label()}"
+                        }
+                    }
+                }
+            }
+            div { style: "
+                    margin-top: 16px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 16px;
+                ",
+                label {
+                    r#for: "playback-selection",
+                    style: "font-weight: 600; white-space: nowrap;",
+                    "Ratings"
                 }
                 select {
                     id: "playback-selection",
