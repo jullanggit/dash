@@ -27,6 +27,8 @@ pub struct Analyzation {
     pub num_rated_tracks_history: Vec<(UtcDateTime, u32)>,
     #[serde(default)]
     pub playlist_snapshot_ids: HashMap<PlaylistId<'static>, String>,
+    #[serde(default)]
+    pub last_full_refetch: HashMap<PlaylistId<'static>, UtcDateTime>,
 }
 impl Analyzation {
     pub fn rating(&self, track_id: TrackId<'_>) -> f32 {
@@ -161,6 +163,7 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
         num_ratings_history,
         num_rated_tracks_history,
         playlist_snapshot_ids: HashMap::new(),
+        last_full_refetch: HashMap::new(),
     }
 }
 

@@ -291,11 +291,31 @@ caching!(
             })
             .collect::<HashMap<_, _>>();
 
+        let mut last_full_refetch = previous.last_full_refetch.clone();
+        let oldest_threshold = UtcDateTime::now() - Duration::days(1);
+
+        // most overdue playlist
+        let overdue_id: Option<PlaylistId<'static>> = playlists
+            .iter()
+            .flat_map(|(_, playlists)| playlists.iter())
+            .filter_map(|playlist| {
+                let last = last_full_refetch
+                    .get(&playlist.id)
+                    .copied()
+                    .unwrap_or(UtcDateTime::MIN);
+                (last < oldest_threshold).then_some((last, playlist.id.clone()))
+            })
+            .min_by_key(|(last, _)| *last)
+            .map(|(_, id)| id);
+
         for (rating, playlists) in playlists.iter() {
             for playlist in playlists.iter() {
-                if previous_snapshot_ids
-                    .get(&playlist.id)
-                    .is_some_and(|previous| *previous == playlist.snapshot_id)
+                let is_overdue_playlist = overdue_id.as_ref() == Some(&playlist.id);
+
+                if !is_overdue_playlist
+                    && previous_snapshot_ids
+                        .get(&playlist.id)
+                        .is_some_and(|previous| *previous == playlist.snapshot_id)
                 {
                     continue;
                 }
@@ -343,8 +363,10 @@ caching!(
                             );
 
                             if entry.rating_history.contains(&data) {
-                                // We have arrived at data older than 15 minutes we already have, and which we assume hasn't changed, so we stop fetching here.
-                                break;
+                                // not overdue => don't fully refetch, assume old data hasn't changed
+                                if !is_overdue_playlist {
+                                    break;
+                                }
                             } else {
                                 entry.rating_history.push(data);
                             }
@@ -356,11 +378,16 @@ caching!(
                         }
                     }
                 }
+
+                if is_overdue_playlist {
+                    last_full_refetch.insert(playlist.id.clone(), UtcDateTime::now());
+                }
             }
         }
 
         let mut analyzation = analyze(ratings).await;
         analyzation.playlist_snapshot_ids = current_snapshot_ids;
+        analyzation.last_full_refetch = last_full_refetch;
         Ok(analyzation)
     },
     RATINGS,
