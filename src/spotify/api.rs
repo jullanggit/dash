@@ -143,10 +143,10 @@ pub async fn spotify() -> &'static AuthCodeSpotify {
 
 caching!(
     rating_playlists,
-    Vec<(f32, SimplifiedPlaylist)>,
+    Vec<(f32, Vec<SimplifiedPlaylist>)>,
     |_, _| async move {
         let spotify = spotify().await;
-        let mut playlists: Vec<(f32, SimplifiedPlaylist)> = Vec::new();
+        let mut groups: Vec<(f32, Vec<SimplifiedPlaylist>)> = Vec::new();
 
         trace!("Getting rating playlists");
 
@@ -169,17 +169,20 @@ caching!(
             if let Ok(rating) = playlist.name.parse::<f32>()
                 && (0.0..=5.0).contains(&rating)
             {
-                if playlists.iter().any(|(s_rating, s_playlist)| {
-                    *s_rating == rating && s_playlist.id != playlist.id
-                }) {
-                    return Err(anyhow::anyhow!("Duplicate rating folder {rating}"));
-                } else {
-                    playlists.push((rating, playlist.clone()))
-                };
+                match groups.iter_mut().find(|(r, _)| *r == rating) {
+                    Some((_, group)) => group.push(playlist.clone()),
+                    None => groups.push((rating, vec![playlist.clone()])),
+                }
             }
         }
 
-        Ok(playlists)
+        // sort by ascending number of tracks to balance playlist filling
+        for (_, group) in &mut groups {
+            group.sort_unstable_by_key(|p| p.items.total);
+        }
+        groups.sort_unstable_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap());
+
+        Ok(groups)
     },
     RATING_PLAYLISTS,
     Duration::minutes(3)
@@ -281,67 +284,76 @@ caching!(
 
         let current_snapshot_ids = playlists
             .iter()
-            .map(|(_, playlist)| (playlist.id.clone(), playlist.snapshot_id.clone()))
+            .flat_map(|(_, playlists)| {
+                playlists
+                    .iter()
+                    .map(|playlist| (playlist.id.clone(), playlist.snapshot_id.clone()))
+            })
             .collect::<HashMap<_, _>>();
 
-        for (rating, playlist) in playlists.iter() {
-            if previous_snapshot_ids
-                .get(&playlist.id)
-                .is_some_and(|previous| *previous == playlist.snapshot_id)
-            {
-                continue;
-            }
+        for (rating, playlists) in playlists.iter() {
+            for playlist in playlists.iter() {
+                if previous_snapshot_ids
+                    .get(&playlist.id)
+                    .is_some_and(|previous| *previous == playlist.snapshot_id)
+                {
+                    continue;
+                }
 
-            let spotify_clone = spotify.clone();
-            let mut items = paginate_retrying(
-                move |offset| {
-                    let spotify = spotify_clone.clone();
-                    let id = playlist.id.clone();
-                    async move {
-                        trace!("[SPOTIFY API LOG] playlist items, id {id}, offset {offset}");
-                        spotify
-                            .playlist_items_manual(id, None, None, None, Some(offset))
-                            .await
-                    }
-                },
-                RequestPermit::Playlists,
-            )
-            .await;
-
-            // assumptions:
-            // The first initialization fetches all available items.
-            // Items older than 15 minutes do not change and are not removed. This can be extended to 'no items are ever changed or removed' once all logic has converted to append-only.
-            while let Some(result) = items.next().await {
-                let item = result.context("Failed to get playlist item")?;
-                match item {
-                    PlaylistItem {
-                        added_at: Some(added_at),
-                        item: Some(PlayableItem::Track(item)),
-                        ..
-                    } => {
-                        let entry = match ratings.iter_mut().find_map(|(s_track, analyzation)| {
-                            (*s_track == item).then_some(analyzation)
-                        }) {
-                            Some(ratings) => ratings,
-                            None => &mut ratings.push_mut((item, TrackAnalyzation::default())).1,
-                        };
-
-                        let data = (
-                            UtcDateTime::from_unix_timestamp(added_at.timestamp()).unwrap(),
-                            *rating,
-                        );
-
-                        if entry.rating_history.contains(&data) {
-                            // We have arrived at data older than 15 minutes we already have, and which we assume hasn't changed, so we stop fetching here.
-                            break;
-                        } else {
-                            entry.rating_history.push(data);
+                let spotify_clone = spotify.clone();
+                let mut items = paginate_retrying(
+                    move |offset| {
+                        let spotify = spotify_clone.clone();
+                        let id = playlist.id.clone();
+                        async move {
+                            trace!("[SPOTIFY API LOG] playlist items, id {id}, offset {offset}");
+                            spotify
+                                .playlist_items_manual(id, None, None, None, Some(offset))
+                                .await
                         }
-                    }
-                    other => {
-                        return Err(anyhow::anyhow!(
-                            "Unexpected format for rating playlist entry: {other:?}"
-                        ));
+                    },
+                    RequestPermit::Playlists,
+                )
+                .await;
+
+                // assumptions:
+                // The first initialization fetches all available items.
+                // Items older than 15 minutes do not change and are not removed. This can be extended to 'no items are ever changed or removed' once all logic has converted to append-only.
+                while let Some(result) = items.next().await {
+                    let item = result.context("Failed to get playlist item")?;
+                    match item {
+                        PlaylistItem {
+                            added_at: Some(added_at),
+                            item: Some(PlayableItem::Track(item)),
+                            ..
+                        } => {
+                            let entry =
+                                match ratings.iter_mut().find_map(|(s_track, analyzation)| {
+                                    (*s_track == item).then_some(analyzation)
+                                }) {
+                                    Some(ratings) => ratings,
+                                    None => {
+                                        &mut ratings.push_mut((item, TrackAnalyzation::default())).1
+                                    }
+                                };
+
+                            let data = (
+                                UtcDateTime::from_unix_timestamp(added_at.timestamp()).unwrap(),
+                                *rating,
+                            );
+
+                            if entry.rating_history.contains(&data) {
+                                // We have arrived at data older than 15 minutes we already have, and which we assume hasn't changed, so we stop fetching here.
+                                break;
+                            } else {
+                                entry.rating_history.push(data);
+                            }
+                        }
+                        other => {
+                            return Err(anyhow::anyhow!(
+                                "Unexpected format for rating playlist entry: {other:?}"
+                            ));
+                        }
                     }
                 }
             }
@@ -556,17 +568,18 @@ caching!(
 );
 
 /// Returns the [SimplifiedPlaylist] for the given `rating`, creating the playlist if it does not yet exist.
+/// If multiple playlists exist for the same rating, returns the one with the fewest tracks.
 #[cfg(feature = "server")]
 async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
     let playlist_name = format!("{:.2}", rating);
 
-    if let Some((_, playlist)) = rating_playlists_server()
+    if let Some((_, playlists)) = rating_playlists_server()
         .await
         .value
         .iter()
         .find(|(playlist_rating, _)| *playlist_rating == rating)
     {
-        return Ok(playlist.clone());
+        return Ok(playlists[0].clone());
     }
 
     let spotify = spotify().await;
@@ -586,19 +599,19 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
 
     let ret = RATING_PLAYLISTS
         .update_cache(&(), |playlists| {
-            let playlists = match playlists {
-                Some(playlists) => playlists,
-                None => &Vec::new(),
-            };
-            if !playlists
-                .iter()
-                .any(|(playlist_rating, _)| *playlist_rating == rating)
-            {
-                let mut playlists = playlists.clone();
-                playlists.push((rating, playlist.clone()));
-                Some(playlists)
-            } else {
-                None // no update needed
+            let mut playlists = playlists.cloned().unwrap_or_default();
+            match playlists.iter_mut().find(|(r, _)| *r == rating) {
+                Some((_, group)) => {
+                    if !group.iter().any(|p| p.id == playlist.id) {
+                        group.push(playlist.clone());
+                        group.sort_unstable_by_key(|p| p.items.total);
+                    }
+                    Some(playlists)
+                }
+                None => {
+                    playlists.push((rating, vec![playlist.clone()]));
+                    Some(playlists)
+                }
             }
         })
         .await;
@@ -656,11 +669,16 @@ async fn update_rating_caches(
         let res = RATING_PLAYLISTS
             .update_cache(&(), |playlists| {
                 let mut playlists = playlists.cloned().unwrap_or_default();
-                if !playlists
-                    .iter()
-                    .any(|(other_rating, _)| *other_rating == rating)
-                {
-                    playlists.push((rating, playlist.clone()));
+                match playlists.iter_mut().find(|(r, _)| *r == rating) {
+                    Some((_, group)) => {
+                        if !group.iter().any(|p| p.id == playlist.id) {
+                            group.push(playlist.clone());
+                            group.sort_unstable_by_key(|p| p.items.total);
+                        }
+                    }
+                    None => {
+                        playlists.push((rating, vec![playlist.clone()]));
+                    }
                 }
 
                 Some(playlists)
