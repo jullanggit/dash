@@ -12,6 +12,7 @@ use rspotify_model::{
 };
 use time::Duration;
 
+use crate::spotify::analyze::TrackKey;
 use crate::spotify::playback::PlaybackSelection;
 
 const MOBILE_BREAKPOINT_PX: u16 = 768;
@@ -66,29 +67,29 @@ fn Player(
     mobile_mode: bool,
 ) -> Element {
     let playback_options = use_resource(|| async move { playback_options().await });
-    let track_id = playback_state.map(move |state| match state {
+    let current_track_key = use_memo(move || match &*playback_state.read() {
         Some(Some(CurrentPlaybackContext {
-            item: Some(PlayableItem::Track(FullTrack { id, .. })),
+            item: Some(PlayableItem::Track(track)),
             ..
-        })) => id,
-        _ => &None,
+        })) => Some(TrackKey::from_track(track)),
+        _ => None,
     });
     let mut rating = use_resource(move || {
-        let id = track_id.read().clone();
+        let key = current_track_key().clone();
         async move {
-            match id {
-                Some(id) => Some(fetch_rating(id).await),
+            match key {
+                Some(key) => Some(fetch_rating(key).await),
                 None => None,
             }
         }
     });
-    let mut pending_rating = use_signal(|| None::<(TrackId<'static>, f32)>);
-    let mut submit_status = use_signal(|| None::<(TrackId<'static>, SubmitStatus)>);
+    let mut pending_rating = use_signal(|| None::<(TrackKey, f32)>);
+    let mut submit_status = use_signal(|| None::<(TrackKey, SubmitStatus)>);
     let mut canonical_history_chart = use_resource(move || {
-        let id = track_id.read().clone().map(TrackId::into_static);
+        let key = current_track_key().clone();
         async move {
-            match id {
-                Some(id) => Some(canonical_rating_history_chart(id).await),
+            match key {
+                Some(key) => Some(canonical_rating_history_chart(key).await),
                 None => None,
             }
         }
@@ -133,13 +134,13 @@ fn Player(
         _ => None,
     });
     let image = track.and_then(|track| track.album.images.first());
-    let current_track_id = track_id.read().clone();
+    let current_track_key_val = current_track_key();
     let pending_rating_value =
         pending_rating
             .read()
             .as_ref()
-            .and_then(|(pending_track_id, pending_rating)| {
-                (Some(pending_track_id) == current_track_id.as_ref()).then_some(*pending_rating)
+            .and_then(|(pending_key, pending_rating)| {
+                (Some(pending_key) == current_track_key_val.as_ref()).then_some(*pending_rating)
             });
     let fetched_rating = match &*rating.read() {
         Some(Some(Ok(rating))) => *rating,
@@ -150,12 +151,12 @@ fn Player(
         submit_status
             .read()
             .as_ref()
-            .and_then(|(submitted_track_id, status)| {
-                (Some(submitted_track_id) == current_track_id.as_ref()).then_some(*status)
+            .and_then(|(submitted_key, status)| {
+                (Some(submitted_key) == current_track_key_val.as_ref()).then_some(*status)
             });
-    let slider_key = current_track_id
+    let slider_key = current_track_key_val
         .as_ref()
-        .map(ToString::to_string)
+        .map(|k| k.to_string())
         .unwrap_or_else(|| "no-track".to_string());
     rsx!(
         if image.is_some() || track.is_some() {
@@ -223,20 +224,27 @@ fn Player(
                             mobile_mode,
                             submit_status: current_submit_status,
                             on_select: move |selected_rating| async move {
-                                let Some(track_id) = track_id.read().clone() else {
+                                let Some(track_key) = current_track_key() else {
                                     return;
                                 };
-                                let track_id = track_id.into_static();
-                                match add_rating(track_id.clone(), selected_rating as f32).await {
+                                let Some(track_id) = (|| {
+                                    let playback = playback_state.read();
+                                    let Some(Some(ctx)) = &*playback else { return None };
+                                    let Some(PlayableItem::Track(track)) = &ctx.item else { return None };
+                                    track.id.clone()
+                                })() else {
+                                    return;
+                                };
+                                match add_rating(track_key.clone(), track_id, selected_rating as f32).await {
                                     Ok(canonical_rating) => {
-                                        pending_rating.set(Some((track_id.clone(), canonical_rating)));
-                                        submit_status.set(Some((track_id, SubmitStatus::Success)));
+                                        pending_rating.set(Some((track_key.clone(), canonical_rating)));
+                                        submit_status.set(Some((track_key, SubmitStatus::Success)));
                                         rating.restart();
                                         canonical_history_chart.restart();
                                     }
                                     Err(error) => {
                                         pending_rating.set(None);
-                                        submit_status.set(Some((track_id, SubmitStatus::Error)));
+                                        submit_status.set(Some((track_key, SubmitStatus::Error)));
                                         error!("Failed to submit rating: {error}");
                                     }
                                 }
@@ -662,18 +670,14 @@ async fn charts() -> Result<Vec<String>> {
 }
 
 #[server]
-async fn canonical_rating_history_chart(track_id: TrackId<'static>) -> Result<Option<String>> {
+async fn canonical_rating_history_chart(track_key: TrackKey) -> Result<Option<String>> {
     use crate::spotify::{ratings_server, track_canonical_rating_history};
     use charming::HtmlRenderer;
 
     assert_authenticated!();
 
     let analyzation = &ratings_server().await.value;
-    let Some((track, analyzed)) = analyzation
-        .tracks
-        .iter()
-        .find(|(track, _)| track.id.as_ref() == Some(&track_id))
-    else {
+    let Some((track, analyzed)) = analyzation.tracks.get(&track_key) else {
         return Ok(None);
     };
 

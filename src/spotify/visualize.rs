@@ -27,7 +27,7 @@ pub fn rating_per_song(data: Analyzation) {
     let mut vec = data
         .tracks
         .iter()
-        .map(|(song, analyzed)| (&song.name, analyzed.canonical_rating))
+        .map(|(_, (track, analyzed))| (&track.name, analyzed.canonical_rating))
         .collect::<Vec<_>>();
     vec.sort_unstable_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
 
@@ -69,9 +69,12 @@ pub fn canonical_rating_distribution(data: &Analyzation) -> Chart {
     let distribution: Vec<Vec<CompositeValue>> = distribution_density(data.tracks.iter().map(
         |(
             _,
-            TrackAnalyzation {
-                canonical_rating, ..
-            },
+            (
+                _,
+                TrackAnalyzation {
+                    canonical_rating, ..
+                },
+            ),
         )| *canonical_rating,
     ))
     .into_iter()
@@ -245,7 +248,7 @@ pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
     canonical_rating_history_chart(
         data.tracks
             .iter()
-            .map(|(track, analyzed)| (track, analyzed)),
+            .map(|(_, (track, analyzed))| (track, analyzed)),
         "Canonical Rating Histories",
         false,
     )
@@ -278,7 +281,7 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         points: data
             .tracks
             .iter()
-            .map(|(track, analyzed)| Point {
+            .map(|(_, (track, analyzed))| Point {
                 x: (track.duration.num_milliseconds() as f32) / 60_000.0,
                 y: analyzed.canonical_rating,
                 name: track.name.clone(),
@@ -299,7 +302,7 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         points: data
             .tracks
             .iter()
-            .map(|(track, analyzed)| Point {
+            .map(|(_, (track, analyzed))| Point {
                 x: track.popularity as f32,
                 y: analyzed.canonical_rating,
                 name: track.name.clone(),
@@ -319,7 +322,7 @@ pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
         points: data
             .tracks
             .iter()
-            .filter_map(|(track, analyzed)| {
+            .filter_map(|(_, (track, analyzed))| {
                 let release_date = track.album.release_date.clone()?;
                 let timestamp = release_date_to_timestamp_millis(
                     &release_date,
@@ -590,7 +593,7 @@ fn proportions_with_scores(
 pub fn genre_proportions(data: &Analyzation) -> Chart {
     let mut genre_counts: HashMap<String, (f32, u32)> = HashMap::new();
 
-    for (_, analyzation) in &data.tracks {
+    for (_, (_, analyzation)) in &data.tracks {
         for genre in &analyzation.genres {
             let (acc, num) = genre_counts.entry(genre.clone()).or_insert((0.0, 0));
             *acc += weight(analyzation.canonical_rating);
@@ -611,7 +614,7 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
 pub fn artist_proportions(data: &Analyzation) -> Chart {
     let mut artist_counts: HashMap<String, (f32, u32)> = HashMap::new();
 
-    for (track, analyzation) in &data.tracks {
+    for (_, (track, analyzation)) in &data.tracks {
         let track_weight = weight(analyzation.canonical_rating);
 
         for artist in &track.artists {
@@ -639,7 +642,7 @@ pub fn song_proportions(data: &Analyzation) -> Chart {
     let song_ratings = sort_and_limit(
         data.tracks
             .iter()
-            .map(|(track, analyzation)| (weight(analyzation.canonical_rating), track.name.clone()))
+            .map(|(key, (_, analyzation))| (weight(analyzation.canonical_rating), key.name.clone()))
             .collect(),
     );
 

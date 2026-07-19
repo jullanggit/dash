@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use rspotify_model::{FullTrack, PlaylistId, TrackId};
+use rspotify_model::{FullTrack, PlaylistId};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use time::{Date, Duration, UtcDateTime};
@@ -7,6 +7,33 @@ use time::{Date, Duration, UtcDateTime};
 // TODO: make this configurable
 pub const DEFAULT_RATING: f32 = 2.5;
 pub const RATING_OVERWRITE_WINDOW: Duration = Duration::minutes(5);
+
+/// A stable key for identifying a track by its name and sorted artist names.
+/// This is preferred over Spotify's `TrackId` because it's invariant across
+/// re-releases, remasters, and different Spotify catalog versions of the same song.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TrackKey {
+    pub name: String,
+    /// sorted alphabetically for consistent comparison
+    pub artists: Vec<String>,
+}
+
+impl TrackKey {
+    pub fn from_track(track: &FullTrack) -> Self {
+        let mut artists: Vec<String> = track.artists.iter().map(|a| a.name.clone()).collect();
+        artists.sort();
+        Self {
+            name: track.name.clone(),
+            artists,
+        }
+    }
+}
+
+impl std::fmt::Display for TrackKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} by {}", self.name, self.artists.join(", "))
+    }
+}
 
 /// Contains all analyzations derived from `rating_history` and the providing track
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -31,16 +58,19 @@ pub struct Analyzation {
     pub last_full_refetch: HashMap<PlaylistId<'static>, UtcDateTime>,
 }
 impl Analyzation {
-    pub fn rating(&self, track_id: TrackId<'_>) -> f32 {
+    pub fn rating(&self, key: &TrackKey) -> f32 {
         self.tracks
-            .iter()
-            .find(|(track, _)| track.id.as_ref() == Some(&track_id))
+            .get(key)
             .map(|(_, analyzation)| analyzation.canonical_rating)
             .unwrap_or(DEFAULT_RATING)
     }
+
+    pub fn contains(&self, key: &TrackKey) -> bool {
+        self.tracks.contains_key(key)
+    }
 }
 
-pub type AnalyzedTracks = Vec<(FullTrack, TrackAnalyzation)>;
+pub type AnalyzedTracks = HashMap<TrackKey, (FullTrack, TrackAnalyzation)>;
 
 fn dedupe_rating_history(rating_history: &mut Vec<(UtcDateTime, f32)>) {
     rating_history.sort_unstable_by_key(|&(time, _)| time);
@@ -85,9 +115,7 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     }
 
     // track analyzations
-    for i in 0..tracks.len() {
-        let (track, analyzation) = &mut tracks[i];
-
+    for (_key, (track, analyzation)) in &mut tracks {
         dedupe_rating_history(&mut analyzation.rating_history);
 
         analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
@@ -110,14 +138,14 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
             .map(|(_, rating)| *rating)
             .unwrap_or(DEFAULT_RATING);
 
-        analyzation.genres = genres(&track).await;
+        analyzation.genres = genres(track).await;
     }
 
     // cross-track analyzations
     let average_rating_per_day = {
         let ratings_per_day: BTreeMap<Date, Vec<f32>> = tracks
             .iter()
-            .flat_map(|(_, track_analyzation)| track_analyzation.rating_history.iter())
+            .flat_map(|(_, (_, analyzation))| analyzation.rating_history.iter())
             .fold(BTreeMap::new(), |mut acc, (date_time, rating)| {
                 let date = date_time.date();
                 acc.entry(date).or_default().push(*rating);
@@ -137,12 +165,12 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     let (num_ratings_history, num_rated_tracks_history) = {
         let rating_times = tracks
             .iter()
-            .flat_map(|(_, data)| data.rating_history.iter().map(|(time, _)| time))
+            .flat_map(|(_, (_, data))| data.rating_history.iter().map(|(time, _)| time))
             .collect::<Vec<_>>();
 
         let first_rating_times = tracks
             .iter()
-            .filter_map(|(_, data)| data.rating_history.iter().map(|(time, _)| time).min())
+            .filter_map(|(_, (_, data))| data.rating_history.iter().map(|(time, _)| time).min())
             .collect::<Vec<_>>();
 
         let history = |mut times: Vec<&UtcDateTime>| {

@@ -9,10 +9,10 @@ use time::UtcDateTime;
 #[cfg(test)]
 use time::{Date, Time};
 
-#[cfg(feature = "server")]
-use crate::spotify::analyze::Analyzation;
 #[cfg(test)]
 use crate::spotify::analyze::DEFAULT_RATING;
+#[cfg(feature = "server")]
+use crate::spotify::analyze::{Analyzation, TrackKey};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PlaybackSelection {
@@ -86,7 +86,7 @@ pub async fn handle_weighted_playback() -> ! {
 
 // TODO: currently seems to be a bit buggy and add 5-11 songs to the queue before stopping.
 #[cfg(feature = "server")]
-async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) {
+async fn queue_random_song(last_queued: &mut Option<(TrackKey, usize)>) {
     use crate::spotify::{
         add_to_queue, playback_options_server, playback_state_server, playlist_tracks_server,
         queue_server, ratings_server, recently_played_server, saved_tracks_server, spotify,
@@ -94,13 +94,13 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
     use rspotify_model::{FullTrack, PlayableItem};
 
     let queue = queue_server().await;
-    let num_in_queue = |track_id| {
+    let num_in_queue = |track_key: &TrackKey| {
         queue
             .value
             .iter()
             .filter(|item| {
-                if let PlayableItem::Track(FullTrack { id: Some(id), .. }) = item
-                    && *id == track_id
+                if let PlayableItem::Track(track) = item
+                    && TrackKey::from_track(track) == *track_key
                 {
                     true
                 } else {
@@ -111,9 +111,9 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
     };
 
     // only queue a song if the last one is no longer in the queue
-    if let Some((track_id, times)) = last_queued {
+    if let Some((track_key, times)) = last_queued {
         // we have to guard against the song already having been in the queue before us queuing
-        if num_in_queue(track_id.clone()) >= *times {
+        if num_in_queue(track_key) >= *times {
             return;
         }
     }
@@ -125,7 +125,7 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
         ..
     }) = context
     {
-        let tracks: Option<Vec<TrackId<'_>>> = match _type {
+        let tracks: Option<Vec<(TrackKey, TrackId<'static>)>> = match _type {
             Type::Playlist => {
                 let Some(id) = uri.strip_prefix("spotify:playlist:") else {
                     error!(
@@ -146,7 +146,15 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
                                     .await
                                     .value
                                     .iter()
-                                    .filter_map(|track| track.id.clone())
+                                    .map(|track| {
+                                        (
+                                            TrackKey::from_track(track),
+                                            track
+                                                .id
+                                                .clone()
+                                                .expect("Playlist tracks should have IDs"),
+                                        )
+                                    })
                                     .collect::<Vec<_>>(),
                             )
                         } else {
@@ -164,7 +172,7 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
                     .await
                     .value
                     .iter()
-                    .cloned()
+                    .map(|(key, track_id)| (key.clone(), track_id.clone()))
                     .collect::<Vec<_>>(),
             ),
             _ => None,
@@ -182,12 +190,12 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
                 options.rating_cutoff,
             );
 
-            if let Some(track) = track {
-                let res = add_to_queue(track.clone()).await;
+            if let Some((track_key, track_id)) = track {
+                let res = add_to_queue(track_id).await;
                 if let Err(e) = res {
                     warn!("{e}")
                 } else {
-                    *last_queued = Some((track.clone(), num_in_queue(track) + 1))
+                    *last_queued = Some((track_key.clone(), num_in_queue(&track_key) + 1))
                 }
             }
         }
@@ -196,22 +204,19 @@ async fn queue_random_song(last_queued: &mut Option<(TrackId<'static>, usize)>) 
 
 #[cfg(feature = "server")]
 fn choose_random_song<'a>(
-    tracks: &[TrackId<'a>],
+    tracks: &[(TrackKey, TrackId<'a>)],
     ratings: &Analyzation,
     recently_played: &[PlayHistory],
     selection: PlaybackSelection,
     rating_cutoff: f32,
-) -> Option<TrackId<'a>> {
+) -> Option<(TrackKey, TrackId<'a>)> {
     use rand::{RngExt, rng};
 
     let tracks = tracks
         .iter()
-        .filter(|track| {
-            let is_rated = ratings
-                .tracks
-                .iter()
-                .any(|(rated_track, _)| rated_track.id.as_ref() == Some(track));
-            let rating = ratings.rating(track.as_ref().clone());
+        .filter(|(track_key, _track_id)| {
+            let is_rated = ratings.contains(track_key);
+            let rating = ratings.rating(track_key);
             if rating < rating_cutoff {
                 return false;
             }
@@ -227,10 +232,10 @@ fn choose_random_song<'a>(
     }
 
     let now = UtcDateTime::now();
-    let weights = tracks.iter().map(|track| {
+    let weights = tracks.iter().map(|(track_key, _track_id)| {
         let recently_played_multiplier = recently_played
             .iter()
-            .find(|recent_track| recent_track.track.id.as_ref() == Some(*track))
+            .find(|recent_track| TrackKey::from_track(&recent_track.track) == *track_key)
             .map(|recent_track| {
                 weight_decay(
                     now,
@@ -238,7 +243,7 @@ fn choose_random_song<'a>(
                 )
             })
             .unwrap_or(1.);
-        weight(ratings.rating(track.as_ref().clone())) * recently_played_multiplier
+        weight(ratings.rating(track_key)) * recently_played_multiplier
     });
 
     let total_weight: f32 = weights.clone().sum();
@@ -251,7 +256,7 @@ fn choose_random_song<'a>(
             value -= weight;
             value <= 0.
         })
-        .map(|(track, _)| (*track).clone())
+        .map(|((track_key, track_id), _)| (track_key.clone(), track_id.clone()))
 }
 
 pub fn weight_decay(now: UtcDateTime, then: UtcDateTime) -> f32 {
@@ -287,42 +292,85 @@ pub fn weight(rating: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{PlaybackSelection, choose_random_song};
-    use crate::spotify::analyze::{Analyzation, TrackAnalyzation};
-    use rspotify_model::{FullTrack, Id, PlayHistory, TrackId};
+    use crate::spotify::analyze::{Analyzation, DEFAULT_RATING, TrackAnalyzation, TrackKey};
+    use rspotify_model::{FullTrack, PlayHistory, SimplifiedArtist};
+    use std::collections::HashMap;
 
-    fn track(id: &'static str) -> TrackId<'static> {
-        TrackId::from_id(id).unwrap().into_static()
+    fn make_track(id: &'static str, name: &'static str, artist: &'static str) -> FullTrack {
+        FullTrack {
+            id: Some(rspotify_model::TrackId::from_id(id).unwrap().into_static()),
+            name: name.to_string(),
+            artists: vec![SimplifiedArtist {
+                name: artist.to_string(),
+                external_urls: HashMap::new(),
+                href: None,
+                id: None,
+            }],
+            album: rspotify_model::SimplifiedAlbum {
+                album_group: None,
+                album_type: None,
+                artists: Vec::new(),
+                available_markets: Vec::new(),
+                external_urls: HashMap::new(),
+                href: None,
+                id: None,
+                images: Vec::new(),
+                name: String::new(),
+                release_date: None,
+                release_date_precision: None,
+                restrictions: None,
+            },
+            available_markets: Vec::new(),
+            disc_number: 0,
+            duration: Default::default(),
+            explicit: false,
+            external_ids: HashMap::new(),
+            external_urls: HashMap::new(),
+            href: None,
+            is_local: false,
+            is_playable: None,
+            linked_from: None,
+            restrictions: None,
+            popularity: 0,
+            preview_url: None,
+            track_number: 0,
+            r#type: rspotify_model::Type::Track,
+        }
     }
 
     #[test]
     fn choose_random_song_filters_to_rated_tracks() {
-        let rated = track("4uLU6hMCjMI75M1A2tKUQC");
-        let unrated = track("1301WleyT98MSxVHPZCA6M");
-        let tracks = [rated.clone(), unrated];
-        let ratings = Analyzation {
-            tracks: vec![(
-                FullTrack {
-                    id: Some(rated.clone()),
-                    ..FullTrack::default()
-                },
+        let rated_track = make_track("4uLU6hMCjMI75M1A2tKUQC", "Rated Song", "Artist A");
+        let unrated_track = make_track("1301WleyT98MSxVHPZCA6M", "Unrated Song", "Artist B");
+        let rated_key = TrackKey::from_track(&rated_track);
+        let unrated_key = TrackKey::from_track(&unrated_track);
+        let tracks = [
+            (rated_key.clone(), rated_track.id.clone().unwrap()),
+            (unrated_key.clone(), unrated_track.id.clone().unwrap()),
+        ];
+        let mut ratings = Analyzation::default();
+        ratings.tracks.insert(
+            rated_key.clone(),
+            (
+                rated_track,
                 TrackAnalyzation {
                     canonical_rating: 4.0,
                     ..TrackAnalyzation::default()
                 },
-            )],
-            ..Analyzation::default()
-        };
+            ),
+        );
 
         let selected =
             choose_random_song(&tracks, &ratings, &[], PlaybackSelection::RatedOnly, 0.0);
 
-        assert_eq!(selected, Some(rated));
+        assert_eq!(selected.map(|(k, _)| k), Some(rated_key));
     }
 
     #[test]
     fn choose_random_song_returns_none_when_filter_excludes_everything() {
-        let unrated = track("1301WleyT98MSxVHPZCA6M");
-        let tracks = [unrated];
+        let unrated_track = make_track("1301WleyT98MSxVHPZCA6M", "Unrated Song", "Artist B");
+        let unrated_key = TrackKey::from_track(&unrated_track);
+        let tracks = [(unrated_key, unrated_track.id.clone().unwrap())];
 
         let selected = choose_random_song(
             &tracks,
@@ -337,22 +385,25 @@ mod tests {
 
     #[test]
     fn choose_random_song_filters_to_unrated_tracks() {
-        let rated = track("4uLU6hMCjMI75M1A2tKUQC");
-        let unrated = track("1301WleyT98MSxVHPZCA6M");
-        let tracks = [rated.clone(), unrated.clone()];
-        let ratings = Analyzation {
-            tracks: vec![(
-                FullTrack {
-                    id: Some(rated),
-                    ..FullTrack::default()
-                },
+        let rated_track = make_track("4uLU6hMCjMI75M1A2tKUQC", "Rated Song", "Artist A");
+        let unrated_track = make_track("1301WleyT98MSxVHPZCA6M", "Unrated Song", "Artist B");
+        let rated_key = TrackKey::from_track(&rated_track);
+        let unrated_key = TrackKey::from_track(&unrated_track);
+        let tracks = [
+            (rated_key.clone(), rated_track.id.clone().unwrap()),
+            (unrated_key.clone(), unrated_track.id.clone().unwrap()),
+        ];
+        let mut ratings = Analyzation::default();
+        ratings.tracks.insert(
+            rated_key.clone(),
+            (
+                rated_track,
                 TrackAnalyzation {
                     canonical_rating: 4.0,
                     ..TrackAnalyzation::default()
                 },
-            )],
-            ..Analyzation::default()
-        };
+            ),
+        );
 
         let selected = choose_random_song(
             &tracks,
@@ -362,13 +413,14 @@ mod tests {
             0.0,
         );
 
-        assert_eq!(selected, Some(unrated));
+        assert_eq!(selected.map(|(k, _)| k), Some(unrated_key));
     }
 
     #[test]
     fn choose_random_song_applies_cutoff_to_default_rating_for_unrated_tracks() {
-        let unrated = track("1301WleyT98MSxVHPZCA6M");
-        let tracks = [unrated];
+        let unrated_track = make_track("1301WleyT98MSxVHPZCA6M", "Unrated Song", "Artist B");
+        let unrated_key = TrackKey::from_track(&unrated_track);
+        let tracks = [(unrated_key, unrated_track.id.clone().unwrap())];
 
         let selected = choose_random_song(
             &tracks,
