@@ -11,11 +11,41 @@ pub const RATING_OVERWRITE_WINDOW: Duration = Duration::minutes(5);
 /// A stable key for identifying a track by its name and sorted artist names.
 /// This is preferred over Spotify's `TrackId` because it's invariant across
 /// re-releases, remasters, and different Spotify catalog versions of the same song.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TrackKey {
     pub name: String,
     /// sorted alphabetically for consistent comparison
     pub artists: Vec<String>,
+}
+
+/// Serialize as a JSON string so it can be used as a `HashMap` key with `serde_json`.
+impl Serialize for TrackKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::Error;
+        let inner = serde_json::json!([self.name, self.artists]);
+        let repr = serde_json::to_string(&inner)
+            .map_err(|e| Error::custom(format!("failed to serialize TrackKey: {e}")))?;
+        serializer.serialize_str(&repr)
+    }
+}
+impl<'de> Deserialize<'de> for TrackKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let repr: String = Deserialize::deserialize(deserializer)?;
+        let arr: serde_json::Value = serde_json::from_str(&repr)
+            .map_err(|e| Error::custom(format!("failed to deserialize TrackKey: {e}")))?;
+        let name = arr[0]
+            .as_str()
+            .ok_or_else(|| Error::custom("TrackKey: missing name"))?
+            .to_string();
+        let artists = arr[1]
+            .as_array()
+            .ok_or_else(|| Error::custom("TrackKey: missing artists"))?
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        Ok(TrackKey { name, artists })
+    }
 }
 
 impl TrackKey {

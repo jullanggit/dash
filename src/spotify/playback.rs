@@ -191,7 +191,7 @@ async fn queue_random_song(last_queued: &mut Option<(TrackKey, usize)>) {
             );
 
             if let Some((track_key, track_id)) = track {
-                let res = add_to_queue(track_id).await;
+                let res = add_to_queue(track_key.clone(), track_id).await;
                 if let Err(e) = res {
                     warn!("{e}")
                 } else {

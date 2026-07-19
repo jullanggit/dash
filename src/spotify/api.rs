@@ -475,29 +475,45 @@ caching!(
     Duration::seconds(2)
 );
 #[cfg(feature = "server")]
-pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> {
-    use rspotify_model::{SimplifiedAlbum, Type};
+pub async fn add_to_queue(
+    track_key: TrackKey,
+    track_id: TrackId<'static>,
+) -> Result<(), anyhow::Error> {
+    use rspotify_model::{SimplifiedAlbum, SimplifiedArtist, Type};
     use std::collections::HashMap;
 
     let spotify = spotify().await;
-    let res = retrying(
-        move |(spotify, track)| async move { spotify.add_item_to_queue(track.into(), None).await },
-        (spotify, track.clone()),
-        RequestPermit::Player,
-    )
-    .await;
+    let res =
+        retrying(
+            move |(spotify, track_id)| async move {
+                spotify.add_item_to_queue(track_id.into(), None).await
+            },
+            (spotify, track_id.clone()),
+            RequestPermit::Player,
+        )
+        .await;
     if let Err(e) = res {
-        Err(anyhow::anyhow!("Failed to add track {track} to queue: {e}"))
+        Err(anyhow::anyhow!(
+            "Failed to add track {track_id} to queue: {e}"
+        ))
     } else {
         let res = QUEUE
             .update_cache(&(), |queue| {
                 let mut queue = queue.cloned().unwrap_or_default();
                 queue.insert(
                     0,
-                    // dummy item with id set
                     PlayableItem::Track(FullTrack {
                         album: SimplifiedAlbum::default(),
-                        artists: Vec::new(),
+                        artists: track_key
+                            .artists
+                            .iter()
+                            .map(|name| SimplifiedArtist {
+                                name: name.clone(),
+                                external_urls: HashMap::new(),
+                                href: None,
+                                id: None,
+                            })
+                            .collect(),
                         available_markets: Vec::new(),
                         disc_number: 0,
                         duration: Default::default(),
@@ -505,12 +521,12 @@ pub async fn add_to_queue(track: TrackId<'static>) -> Result<(), anyhow::Error> 
                         external_ids: HashMap::new(),
                         external_urls: HashMap::new(),
                         href: None,
-                        id: Some(track),
+                        id: Some(track_id),
                         is_local: false,
                         is_playable: None,
                         linked_from: None,
                         restrictions: None,
-                        name: String::new(),
+                        name: track_key.name.clone(),
                         popularity: 0,
                         preview_url: None,
                         track_number: 0,
