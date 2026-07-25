@@ -4,8 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use time::{Date, Duration, UtcDateTime};
 
-// TODO: make this configurable
-pub const DEFAULT_RATING: f32 = 2.5;
 pub const RATING_OVERWRITE_WINDOW: Duration = Duration::minutes(5);
 
 /// A stable key for identifying a track by its name and sorted artist names.
@@ -88,11 +86,10 @@ pub struct Analyzation {
     pub last_full_refetch: HashMap<PlaylistId<'static>, UtcDateTime>,
 }
 impl Analyzation {
-    pub fn rating(&self, key: &TrackKey) -> f32 {
+    pub fn rating(&self, key: &TrackKey) -> Option<f32> {
         self.tracks
             .get(key)
             .map(|(_, analyzation)| analyzation.canonical_rating)
-            .unwrap_or(DEFAULT_RATING)
     }
 
     pub fn contains(&self, key: &TrackKey) -> bool {
@@ -166,7 +163,7 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
             .canonical_rating_history
             .last()
             .map(|(_, rating)| *rating)
-            .unwrap_or(DEFAULT_RATING);
+            .expect("a to-be-analyzed track should have a rating");
 
         analyzation.genres = genres(track).await;
     }

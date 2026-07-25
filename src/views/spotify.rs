@@ -1,9 +1,9 @@
 use crate::{
     assert_authenticated,
     spotify::{
-        add_rating, caching::use_server_fn, genres, playback_options, playback_rating_cutoff,
-        playback_selection, rating_if_recently_rated as fetch_rating, use_playback_state,
-        weighted_playback,
+        add_rating, caching::use_server_fn, genres, playback_default_rating, playback_options,
+        playback_rating_cutoff, playback_selection, rating_if_recently_rated as fetch_rating,
+        use_playback_state, weighted_playback,
     },
 };
 use dioxus::prelude::*;
@@ -444,16 +444,20 @@ fn PlaybackOptionsPanel(
     current_playlist_id: Option<PlaylistId<'static>>,
     playback_options: Resource<Result<crate::spotify::playback::PlaybackOptions>>,
 ) -> Element {
-    let (is_enabled, selection, rating_cutoff) = match &*playback_options.read() {
-        Some(Ok(options)) => (
-            current_playlist_id
-                .as_ref()
-                .is_some_and(|playlist_id| options.weighted_playback_enabled(playlist_id)),
-            options.selection,
-            options.rating_cutoff,
-        ),
-        _ => (false, PlaybackSelection::Everything, 0.0),
-    };
+    let options = playback_options
+        .read()
+        .clone()
+        .map(Result::ok)
+        .flatten()
+        .unwrap_or_default();
+    let (is_enabled, selection, rating_cutoff, default_rating) = (
+        current_playlist_id
+            .as_ref()
+            .is_some_and(|playlist_id| options.weighted_playback_enabled(playlist_id)),
+        options.selection,
+        options.rating_cutoff,
+        options.default_rating,
+    );
     let is_pending = playback_options.pending();
 
     rsx! {
@@ -610,6 +614,44 @@ fn PlaybackOptionsPanel(
                         },
                     }
                     output { style: "min-width: 3.5ch; text-align: right;", "{rating_cutoff:.1}" }
+                }
+            }
+            div { style: "
+                    margin-top: 16px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 16px;
+                ",
+                label {
+                    r#for: "playback-default-rating",
+                    style: "font-weight: 600; white-space: nowrap;",
+                    "Default Rating"
+                }
+                div { style: "flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;",
+                    input {
+                        id: "playback-default-rating",
+                        r#type: "range",
+                        min: "0",
+                        max: "5",
+                        step: "0.1",
+                        disabled: is_pending,
+                        value: format!("{default_rating:.1}"),
+                        style: "flex: 1; min-width: 0;",
+                        onchange: move |event| {
+                            let value = event.value();
+                            async move {
+                                let Ok(default_rating) = value.parse::<f32>() else {
+                                    return;
+                                };
+                                if let Err(error) = playback_default_rating(default_rating).await {
+                                    error!("Failed to update default rating: {error}");
+                                }
+                                playback_options.restart();
+                            }
+                        },
+                    }
+                    output { style: "min-width: 3.5ch; text-align: right;", "{default_rating:.1}" }
                 }
             }
         }

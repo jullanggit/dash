@@ -9,8 +9,6 @@ use time::UtcDateTime;
 #[cfg(test)]
 use time::{Date, Time};
 
-#[cfg(test)]
-use crate::spotify::analyze::DEFAULT_RATING;
 #[cfg(feature = "server")]
 use crate::spotify::analyze::{Analyzation, TrackKey};
 
@@ -27,6 +25,7 @@ pub struct PlaybackOptions {
     pub weighted_playback_playlists: HashSet<PlaylistId<'static>>,
     pub selection: PlaybackSelection,
     pub rating_cutoff: f32,
+    pub default_rating: f32,
 }
 
 impl Default for PlaybackOptions {
@@ -35,6 +34,7 @@ impl Default for PlaybackOptions {
             weighted_playback_playlists: HashSet::new(),
             selection: PlaybackSelection::Everything,
             rating_cutoff: 0.0,
+            default_rating: 2.5,
         }
     }
 }
@@ -188,6 +188,7 @@ async fn queue_random_song(last_queued: &mut Option<(TrackKey, usize)>) {
                 recently_played,
                 options.selection,
                 options.rating_cutoff,
+                options.default_rating,
             );
 
             if let Some((track_key, track_id)) = track {
@@ -209,6 +210,7 @@ fn choose_random_song<'a>(
     recently_played: &[PlayHistory],
     selection: PlaybackSelection,
     rating_cutoff: f32,
+    default_rating: f32,
 ) -> Option<(TrackKey, TrackId<'a>)> {
     use rand::{RngExt, rng};
 
@@ -216,7 +218,7 @@ fn choose_random_song<'a>(
         .iter()
         .filter(|(track_key, _track_id)| {
             let is_rated = ratings.contains(track_key);
-            let rating = ratings.rating(track_key);
+            let rating = ratings.rating(track_key).unwrap_or(default_rating);
             if rating < rating_cutoff {
                 return false;
             }
@@ -243,7 +245,8 @@ fn choose_random_song<'a>(
                 )
             })
             .unwrap_or(1.);
-        weight(ratings.rating(track_key)) * recently_played_multiplier
+        let track_rating = ratings.rating(track_key).unwrap_or(default_rating);
+        weight(track_rating) * recently_played_multiplier
     });
 
     let total_weight: f32 = weights.clone().sum();
@@ -292,7 +295,7 @@ pub fn weight(rating: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{PlaybackSelection, choose_random_song};
-    use crate::spotify::analyze::{Analyzation, DEFAULT_RATING, TrackAnalyzation, TrackKey};
+    use crate::spotify::analyze::{Analyzation, TrackAnalyzation, TrackKey};
     use rspotify_model::{FullTrack, PlayHistory, SimplifiedArtist};
     use std::collections::HashMap;
 
@@ -360,8 +363,14 @@ mod tests {
             ),
         );
 
-        let selected =
-            choose_random_song(&tracks, &ratings, &[], PlaybackSelection::RatedOnly, 0.0);
+        let selected = choose_random_song(
+            &tracks,
+            &ratings,
+            &[] as &[PlayHistory],
+            PlaybackSelection::RatedOnly,
+            0.0,
+            2.5,
+        );
 
         assert_eq!(selected.map(|(k, _)| k), Some(rated_key));
     }
@@ -378,6 +387,7 @@ mod tests {
             &[] as &[PlayHistory],
             PlaybackSelection::RatedOnly,
             0.0,
+            2.5,
         );
 
         assert_eq!(selected, None);
@@ -411,6 +421,7 @@ mod tests {
             &[] as &[PlayHistory],
             PlaybackSelection::UnratedOnly,
             0.0,
+            2.5,
         );
 
         assert_eq!(selected.map(|(k, _)| k), Some(unrated_key));
@@ -427,7 +438,8 @@ mod tests {
             &Analyzation::default(),
             &[] as &[PlayHistory],
             PlaybackSelection::Everything,
-            DEFAULT_RATING + 0.1,
+            2.6,
+            2.5,
         );
 
         assert_eq!(selected, None);

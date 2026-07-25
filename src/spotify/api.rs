@@ -755,7 +755,10 @@ async fn update_rating_caches(
 
     cached_ratings.value = analyze(cached_ratings.value.tracks.clone()).await;
 
-    let canonical_rating = cached_ratings.value.rating(&TrackKey::from_track(track));
+    let canonical_rating = cached_ratings
+        .value
+        .rating(&TrackKey::from_track(track))
+        .expect("track was just analyzed so it should be present");
 
     if let Err(e) = RATINGS.write_cache(&(), Arc::new(cached_ratings)).await {
         warn!("Failed to update ratings disk cache: {e}");
@@ -1101,4 +1104,9 @@ pub async fn playback_selection(selection: PlaybackSelection) -> Result<()> {
 #[server]
 pub async fn playback_rating_cutoff(rating_cutoff: f32) -> Result<()> {
     update_playback_options(|options| options.rating_cutoff = rating_cutoff.clamp(0.0, 5.0)).await
+}
+
+#[server]
+pub async fn playback_default_rating(default_rating: f32) -> Result<()> {
+    update_playback_options(|options| options.default_rating = default_rating.clamp(0.0, 5.0)).await
 }
