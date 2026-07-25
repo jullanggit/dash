@@ -21,6 +21,7 @@ pub enum PlaybackSelection {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PlaybackOptions {
     pub weighted_playback_playlists: HashSet<PlaylistId<'static>>,
     pub selection: PlaybackSelection,
