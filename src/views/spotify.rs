@@ -463,7 +463,7 @@ fn PlaybackOptionsPanel(
     rsx! {
         div { style: "
                 justify-self: start;
-                width: min(100%, 320px);
+                width: min(150%, 380px);
                 padding: 20px;
                 border: 1px solid #2f2f2f;
                 border-radius: 16px;
