@@ -871,7 +871,9 @@ pub async fn genres(track: &FullTrack) -> HashMap<String, f32> {
         new_genres: impl IntoIterator<Item = (String, f32)>,
     ) {
         for (genre, weight) in new_genres {
-            *genres.entry(genre.to_lowercase()).or_default() += weight;
+            // dedupe across sources: keep the highest weight
+            let entry = genres.entry(genre.to_lowercase()).or_default();
+            *entry = entry.max(weight);
         }
     }
 
@@ -887,9 +889,10 @@ pub async fn genres(track: &FullTrack) -> HashMap<String, f32> {
                     continue;
                 }
             };
+            // artist-granularity genres are less specific, so they count 70%
             add_genres(
                 &mut genres,
-                full_artist.genres.into_iter().map(|genre| (genre, 1.0)), // count spotify genres as full
+                full_artist.genres.into_iter().map(|genre| (genre, 0.7)),
             );
         }
 
@@ -910,7 +913,7 @@ pub async fn genres(track: &FullTrack) -> HashMap<String, f32> {
             &mut genres,
             lastfm_artist_genres
                 .into_iter()
-                .map(|tag| (tag.name, tag.count as f32 / 100.0)),
+                .map(|tag| (tag.name, 0.7 * tag.count as f32 / 100.0)),
         );
 
         // only fetch track genres for the first artist
