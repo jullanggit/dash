@@ -517,6 +517,8 @@ pub async fn add_to_queue(
             "Failed to add track \"{track_key}\" ({track_id}) to queue: {e}"
         ))
     } else {
+        info!("Added track \"{track_key}\" ({track_id}) to queue");
+
         let res = QUEUE
             .update_cache(&(), |queue| {
                 let mut queue = queue.cloned().unwrap_or_default();
