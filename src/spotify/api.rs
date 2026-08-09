@@ -514,7 +514,7 @@ pub async fn add_to_queue(
         .await;
     if let Err(e) = res {
         Err(anyhow::anyhow!(
-            "Failed to add track {track_id} to queue: {e}"
+            "Failed to add track \"{track_key}\" ({track_id}) to queue: {e}"
         ))
     } else {
         let res = QUEUE
