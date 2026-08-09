@@ -913,7 +913,7 @@ pub async fn genres(track: &FullTrack) -> HashMap<String, f32> {
             &mut genres,
             lastfm_artist_genres
                 .into_iter()
-                .map(|tag| (tag.name, 0.7 * tag.count as f32 / 100.0)),
+                .map(|tag| (tag.name, 0.7 * tag.count as f32 / 100.0)), // 100 = max
         );
 
         // only fetch track genres for the first artist
@@ -936,7 +936,7 @@ pub async fn genres(track: &FullTrack) -> HashMap<String, f32> {
                 &mut genres,
                 lastfm_genres
                     .into_iter()
-                    .map(|tag| (tag.name, tag.count as f32 / 100.0)),
+                    .map(|tag| (tag.name, tag.count as f32 / 100.0)), // 100 = max
             );
         }
 
