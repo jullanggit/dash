@@ -61,6 +61,15 @@ fn DesktopCharts() -> Element {
     }
 }
 
+/// Interpolate a genre's display color between a dark gray (low weight) and
+/// white (high weight), so tags that count more are shown brighter.
+fn genre_color(weight: f32) -> String {
+    const DARK_GRAY: u8 = 50;
+    let weight = weight.clamp(0.0, 1.0);
+    let channel = (DARK_GRAY as f32 + weight * (255 - DARK_GRAY) as f32) as u8;
+    format!("rgb({channel}, {channel}, {channel})")
+}
+
 #[component]
 fn Player(
     playback_state: Signal<Option<Option<CurrentPlaybackContext>>>,
@@ -211,19 +220,20 @@ fn Player(
                             h3 { "{track.name}" }
                         }
                         match &*genres.read() {
-                            Some(Some(genres)) if !genres.is_empty() => {
-                                format!(
-                                    "Genres: {}",
-                                    genres
-                                        .iter()
-                                        .map(|(genre, _)| genre)
-                                        .cloned()
-                                        .intersperse(", ".into())
-                                        .collect::<String>(),
-                                )
-                            }
-                            Some(_) => String::new(),
-                            None => "Getting genres...".to_string(),
+                            Some(Some(genres)) if !genres.is_empty() => rsx! {
+                                "Genres: "
+                                for (i, (genre, weight)) in genres.iter().enumerate() {
+                                    if i > 0 {
+                                        ", "
+                                    }
+                                    span {
+                                        style: "color: {genre_color(*weight)};",
+                                        "{genre}"
+                                    }
+                                }
+                            },
+                            Some(_) => rsx! {},
+                            None => rsx! { "Getting genres..." },
                         }
                         br {}
                         br {}
