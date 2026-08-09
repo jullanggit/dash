@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use rspotify_model::{FullTrack, PlaylistId};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use time::{Date, Duration, UtcDateTime};
 
 pub const RATING_OVERWRITE_WINDOW: Duration = Duration::minutes(5);
@@ -70,7 +70,8 @@ pub struct TrackAnalyzation {
     pub rating_history: Vec<(UtcDateTime, f32)>,
     pub canonical_rating_history: Vec<(UtcDateTime, f32)>,
     pub canonical_rating: f32,
-    pub genres: HashSet<String>,
+    /// genre name -> weight
+    pub genres: HashMap<String, f32>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

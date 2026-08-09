@@ -105,7 +105,11 @@ fn Player(
             return None;
         };
         let mut genres = genres(&track).await.into_iter().collect::<Vec<_>>();
-        genres.sort();
+
+        // sort by weight, with alphabetical tie-breaker
+        genres.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+        genres.sort_by(|(_, a), (_, b)| b.total_cmp(a));
+
         Some(genres)
     });
 
@@ -210,7 +214,12 @@ fn Player(
                             Some(Some(genres)) if !genres.is_empty() => {
                                 format!(
                                     "Genres: {}",
-                                    genres.iter().cloned().intersperse(", ".into()).collect::<String>(),
+                                    genres
+                                        .iter()
+                                        .map(|(genre, _)| genre)
+                                        .cloned()
+                                        .intersperse(", ".into())
+                                        .collect::<String>(),
                                 )
                             }
                             Some(_) => String::new(),

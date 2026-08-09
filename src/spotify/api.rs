@@ -30,7 +30,7 @@ use rspotify_model::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::{self, Display, Formatter},
     iter,
     sync::{LazyLock, OnceLock},
@@ -863,12 +863,15 @@ caching_hashmap!(
     Duration::weeks(4) // assume artists are mostly static
 );
 
-pub async fn genres(track: &FullTrack) -> HashSet<String> {
-    let mut genres = HashSet::new();
+pub async fn genres(track: &FullTrack) -> HashMap<String, f32> {
+    let mut genres = HashMap::new();
 
-    fn add_genres(genres: &mut HashSet<String>, new_genres: impl IntoIterator<Item = String>) {
-        for genre in new_genres {
-            genres.insert(genre.to_lowercase());
+    fn add_genres(
+        genres: &mut HashMap<String, f32>,
+        new_genres: impl IntoIterator<Item = (String, f32)>,
+    ) {
+        for (genre, weight) in new_genres {
+            *genres.entry(genre.to_lowercase()).or_default() += weight;
         }
     }
 
@@ -884,7 +887,10 @@ pub async fn genres(track: &FullTrack) -> HashSet<String> {
                     continue;
                 }
             };
-            add_genres(&mut genres, full_artist.genres);
+            add_genres(
+                &mut genres,
+                full_artist.genres.into_iter().map(|genre| (genre, 1.0)), // count spotify genres as full
+            );
         }
 
         #[cfg(feature = "server")]
@@ -902,7 +908,9 @@ pub async fn genres(track: &FullTrack) -> HashSet<String> {
         };
         add_genres(
             &mut genres,
-            lastfm_artist_genres.into_iter().map(|tag| tag.name),
+            lastfm_artist_genres
+                .into_iter()
+                .map(|tag| (tag.name, tag.count as f32 / 100.0)),
         );
 
         // only fetch track genres for the first artist
@@ -921,7 +929,12 @@ pub async fn genres(track: &FullTrack) -> HashSet<String> {
                     Vec::new()
                 }
             };
-            add_genres(&mut genres, lastfm_genres.into_iter().map(|tag| tag.name));
+            add_genres(
+                &mut genres,
+                lastfm_genres
+                    .into_iter()
+                    .map(|tag| (tag.name, tag.count as f32 / 100.0)),
+            );
         }
 
         // cleanup

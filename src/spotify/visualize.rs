@@ -594,9 +594,9 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
     let mut genre_counts: HashMap<String, (f32, u32)> = HashMap::new();
 
     for (_, (_, analyzation)) in &data.tracks {
-        for genre in &analyzation.genres {
+        for (genre, genre_weight) in &analyzation.genres {
             let (acc, num) = genre_counts.entry(genre.clone()).or_insert((0.0, 0));
-            *acc += weight(analyzation.canonical_rating);
+            *acc += weight(analyzation.canonical_rating) * genre_weight;
             *num += 1;
         }
     }
