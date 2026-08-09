@@ -228,38 +228,56 @@ where
     Fut: Future<Output = ClientResult<T>>,
     T: DeserializeOwned + Debug,
 {
+    retrying_nohandle(f, args, permit, &[]).await
+}
+
+/// Doesn't retry on any of the `dont_retry` status codes
+#[cfg(feature = "server")]
+pub async fn retrying_nohandle<F, Args, Fut, T>(
+    f: F,
+    args: Args,
+    permit: RequestPermit,
+    dont_retry: &[u16],
+) -> ClientResult<T>
+where
+    F: Fn(Args) -> Fut,
+    Args: Clone,
+    Fut: Future<Output = ClientResult<T>>,
+    T: DeserializeOwned + Debug,
+{
     let mut num_tries = 0;
     let permit = permit.acquire().await?;
     loop {
         let res = f(args.clone()).await;
         if let Err(ClientError::Http(ref http)) = res
             && let rspotify_http::HttpError::StatusCode(response) = http.as_ref()
-            && num_tries <= 5
         {
             let status_code = response.status().as_u16();
-            let retry_after = status_code
-                .eq(&429)
-                .then(|| {
-                    response
-                        .headers()
-                        .iter()
-                        .find(|(name, _)| name.as_str() == "retry-after")
-                        .and_then(|(_, value)| value.to_str().ok())
-                        .and_then(|str| str.parse().ok())
-                })
-                .flatten()
-                .unwrap_or_else(|| {
-                    num_tries += 1;
-                    2u64.pow(num_tries - 1)
-                });
+            if !dont_retry.contains(&status_code) && num_tries <= 5 {
+                let retry_after = status_code
+                    .eq(&429)
+                    .then(|| {
+                        response
+                            .headers()
+                            .iter()
+                            .find(|(name, _)| name.as_str() == "retry-after")
+                            .and_then(|(_, value)| value.to_str().ok())
+                            .and_then(|str| str.parse().ok())
+                    })
+                    .flatten()
+                    .unwrap_or_else(|| {
+                        num_tries += 1;
+                        2u64.pow(num_tries - 1)
+                    });
 
-            // wait for retry-after, retry in the next loop, as offset didnt get incremented
-            info!(
-                "Retrying {} after {retry_after} seconds: {res:?}",
-                response.url()
-            );
-            sleep(std::time::Duration::from_secs(retry_after)).await;
-            continue;
+                // wait for retry-after, retry in the next loop, as offset didnt get incremented
+                info!(
+                    "Retrying {} after {retry_after} seconds: {res:?}",
+                    response.url()
+                );
+                sleep(std::time::Duration::from_secs(retry_after)).await;
+                continue;
+            }
         }
         return res;
     }
@@ -484,12 +502,14 @@ pub async fn add_to_queue(
 
     let spotify = spotify().await;
     let res =
-        retrying(
+        retrying_nohandle(
             move |(spotify, track_id)| async move {
                 spotify.add_item_to_queue(track_id.into(), None).await
             },
             (spotify, track_id.clone()),
             RequestPermit::Player,
+            // 404 means the track can't be queued, so retrying won't help. Fail fast so a different song gets queued instead.
+            &[404],
         )
         .await;
     if let Err(e) = res {
