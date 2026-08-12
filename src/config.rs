@@ -1,8 +1,47 @@
 use crate::{caching, spotify::caching::use_server_fn};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{
+    borrow::Cow,
+    env,
+    path::{Path, PathBuf},
+};
 use time::{Duration, UtcDateTime};
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpotifyConfig {
+    #[serde(default = "default_spotify_secrets_file")]
+    pub secrets_file: PathBuf,
+    #[serde(default = "default_spotify_token_cache_directory")]
+    pub token_cache_directory: PathBuf,
+}
+
+fn default_spotify_secrets_file() -> PathBuf {
+    "~/.config/dash/spotify-secrets.json".into()
+}
+
+fn default_spotify_token_cache_directory() -> PathBuf {
+    "~/.cache/dash/rspotify".into()
+}
+
+pub fn expand_tilde<'a>(path: &'a Path) -> Cow<'a, Path> {
+    if path.starts_with("~") {
+        let home = env::home_dir().expect("failed to get home directory");
+        Cow::Owned(home.join(path.strip_prefix("~").unwrap()))
+    } else {
+        Cow::Borrowed(path)
+    }
+}
+
+impl Default for SpotifyConfig {
+    fn default() -> Self {
+        Self {
+            secrets_file: default_spotify_secrets_file(),
+            token_cache_directory: default_spotify_token_cache_directory(),
+        }
+    }
+}
 
 caching!(
     config,
@@ -23,6 +62,8 @@ structstruck::strike!(
     #[structstruck::each[serde(rename_all = "camelCase")]]
     pub struct Config {
       pub password_file: PathBuf,
+      #[serde(default)]
+      pub spotify: SpotifyConfig,
       pub mimir: struct {
         pub url: String,
       },
@@ -53,6 +94,7 @@ impl Config {
     fn default() -> Self {
         Self {
             password_file: "/run/secrets/dashboard-password.hash".into(),
+            spotify: SpotifyConfig::default(),
             mimir: Mimir {
                 url: "localhost:3001/mimir".to_string(),
             },

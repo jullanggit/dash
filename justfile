@@ -1,17 +1,22 @@
 # Run checks for both server and web
 check:
-	cargo clippy --features server -Zno-index-update
-	cargo clippy --features web --target wasm32-unknown-unknown -Zno-index-update
+    cargo clippy --features server -Zno-index-update
+    cargo clippy --features web --target wasm32-unknown-unknown -Zno-index-update
+
+# Run checks for both server and web
+test:
+    cargo test --features server -Zno-index-update
+    cargo test --features web --target wasm32-unknown-unknown -Zno-index-update
 
 # Serve website
 serve:
-	dx serve --no-default-features --web
+    dx serve --no-default-features --web
 
 # Format code
 fmt:
-	cargo fmt
-	dx fmt
-	tombi fmt Cargo.toml
+    cargo fmt
+    dx fmt
+    tombi fmt Cargo.toml
 
 bundle:
-	RUSTFLAGS="" dx bundle --web --release
+    RUSTFLAGS="" dx bundle --web --release

@@ -1,5 +1,9 @@
 {
   "passwordFile": "~/.cache/dash/password.hash",
+  "spotify": {
+    "secretsFile": "~/.config/dash/spotify-secrets.json",
+    "tokenCacheDirectory": "~/.cache/dash/rspotify"
+  },
   "mimir": {
     "url": "localhost:3001/mimir"
   },
