@@ -143,7 +143,7 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     }
 
     // track analyzations
-    for (_key, (track, analyzation)) in &mut tracks {
+    for (track, analyzation) in tracks.values_mut() {
         dedupe_rating_history(&mut analyzation.rating_history);
 
         analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())

@@ -90,9 +90,9 @@ pub async fn handle_weighted_playback() -> ! {
 async fn queue_random_song(last_queued: &mut Option<(TrackKey, usize)>) {
     use crate::spotify::{
         add_to_queue, playback_options_server, playback_state_server, playlist_tracks_server,
-        queue_server, ratings_server, recently_played_server, saved_tracks_server, spotify,
+        queue_server, ratings_server, recently_played_server, saved_tracks_server,
     };
-    use rspotify_model::{FullTrack, PlayableItem};
+    use rspotify_model::PlayableItem;
 
     let queue = queue_server().await;
     let num_in_queue = |track_key: &TrackKey| {

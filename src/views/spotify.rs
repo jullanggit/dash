@@ -7,9 +7,7 @@ use crate::{
     },
 };
 use dioxus::prelude::*;
-use rspotify_model::{
-    Context, CurrentPlaybackContext, FullTrack, PlayableItem, PlaylistId, TrackId, Type,
-};
+use rspotify_model::{Context, CurrentPlaybackContext, PlayableItem, PlaylistId, Type};
 use time::Duration;
 
 use crate::spotify::analyze::TrackKey;
@@ -466,8 +464,7 @@ fn PlaybackOptionsPanel(
     let options = playback_options
         .read()
         .clone()
-        .map(Result::ok)
-        .flatten()
+        .and_then(Result::ok)
         .unwrap_or_default();
     let (is_enabled, selection, rating_cutoff, default_rating) = (
         current_playlist_id

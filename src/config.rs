@@ -6,7 +6,7 @@ use std::{
     env,
     path::{Path, PathBuf},
 };
-use time::{Duration, UtcDateTime};
+use time::Duration;
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]

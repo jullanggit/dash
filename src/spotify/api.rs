@@ -64,19 +64,12 @@ pub async fn spotify_api() -> &'static Arc<SpotifyApi> {
         .await
 }
 
-#[cfg(feature = "server")]
-pub async fn spotify() -> Arc<AuthCodeSpotify> {
-    spotify_api().await.client(0)
-}
-
-#[cfg(feature = "server")]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SpotifySecrets {
     accounts: HashMap<String, SpotifyAccountSecret>,
 }
 
-#[cfg(feature = "server")]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SpotifyAccountSecret {
@@ -328,7 +321,7 @@ caching!(
 
         use crate::spotify::analyze::TrackKey;
 
-        let mut current_snapshot_ids = playlists
+        let current_snapshot_ids = playlists
             .iter()
             .flat_map(|(_, playlists)| {
                 playlists
@@ -1055,7 +1048,7 @@ async fn lastfm_top_tags_inner(
                 ])
                 .send()
                 .await
-                .map_err(|err| rspotify_http::HttpError::Client(err))?;
+                .map_err(rspotify_http::HttpError::Client)?;
             if !response.status().is_success() {
                 return Err(ClientError::from(rspotify_http::HttpError::StatusCode(
                     response,
@@ -1065,7 +1058,7 @@ async fn lastfm_top_tags_inner(
             let deserialized = response
                 .json::<LastFmTopTagsResponse>()
                 .await
-                .map_err(|err| rspotify_http::HttpError::Client(err))?;
+                .map_err(rspotify_http::HttpError::Client)?;
 
             match deserialized {
                 LastFmTopTagsResponse {
@@ -1073,8 +1066,7 @@ async fn lastfm_top_tags_inner(
                     ..
                 } => Ok(toptags.tag),
                 LastFmTopTagsResponse { error: Some(6), .. } => Ok(Vec::new()), // not found
-                LastFmTopTagsResponse { error, message, .. } => Err(ClientError::Io(std::io::Error::new(std::io::ErrorKind::Other,
-                    format!("Failed to get last.fm top tags for {key}: error={error:?} message={message:?}")))),
+                LastFmTopTagsResponse { error, message, .. } => Err(ClientError::Io(std::io::Error::other(format!("Failed to get last.fm top tags for {key}: error={error:?} message={message:?}")))),
             }
         },
         (key.clone(), client),

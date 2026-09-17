@@ -174,10 +174,6 @@ impl SpotifyLease {
         self.api.client(self.account)
     }
 
-    pub fn account(&self) -> usize {
-        self.account
-    }
-
     pub async fn rate_limited(mut self, retry_after: Duration) {
         let unavailable_until = Instant::now() + retry_after;
         let mut state = self.pool.state.lock().await;
