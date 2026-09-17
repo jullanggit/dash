@@ -67,6 +67,14 @@
               binaryen # wasm-opt
               jemalloc-tikv
               podman
+
+              # desktop
+              glib
+              cairo
+              gtk3
+              libsoup_3
+              webkitgtk_4_1
+              xdotool
             ];
             JEMALLOC_OVERRIDE = "${jemalloc-tikv}/lib/libjemalloc.a";
           };
