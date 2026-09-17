@@ -27,6 +27,7 @@ pub struct PlaybackOptions {
     pub selection: PlaybackSelection,
     pub rating_cutoff: f32,
     pub default_rating: f32,
+    pub queue_size: u8,
 }
 
 impl Default for PlaybackOptions {
@@ -36,6 +37,7 @@ impl Default for PlaybackOptions {
             selection: PlaybackSelection::Everything,
             rating_cutoff: 0.0,
             default_rating: 2.5,
+            queue_size: 1,
         }
     }
 }
@@ -77,9 +79,9 @@ impl PlaybackSelection {
 
 #[cfg(feature = "server")]
 pub async fn handle_weighted_playback() -> ! {
-    let mut last_queued = None;
+    let mut last_queued = Vec::new();
     loop {
-        queue_random_song(&mut last_queued).await;
+        queue_random_songs(&mut last_queued).await;
 
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
@@ -87,46 +89,24 @@ pub async fn handle_weighted_playback() -> ! {
 
 // TODO: currently seems to be a bit buggy and add 5-11 songs to the queue before stopping.
 #[cfg(feature = "server")]
-async fn queue_random_song(last_queued: &mut Option<(TrackKey, usize)>) {
+async fn queue_random_songs(last_queued: &mut Vec<(TrackKey, usize)>) {
     use crate::spotify::{
         add_to_queue, playback_options_server, playback_state_server, playlist_tracks_server,
         queue_server, ratings_server, recently_played_server, saved_tracks_server, spotify,
     };
     use rspotify_model::{FullTrack, PlayableItem};
 
-    let queue = queue_server().await;
-    let num_in_queue = |track_key: &TrackKey| {
-        queue
-            .value
-            .iter()
-            .filter(|item| {
-                if let PlayableItem::Track(track) = item
-                    && TrackKey::from_track(track) == *track_key
-                {
-                    true
-                } else {
-                    false
-                }
-            })
-            .count()
-    };
-
-    // only queue a song if the last one is no longer in the queue
-    if let Some((track_key, times)) = last_queued {
-        // we have to guard against the song already having been in the queue before us queuing
-        if num_in_queue(track_key) >= *times {
+    let tracks: Vec<(TrackKey, TrackId<'static>)> = {
+        let context = &playback_state_server().await.value;
+        let Some(CurrentPlaybackContext {
+            context: Some(Context { _type, uri, .. }),
+            ..
+        }) = context
+        else {
             return;
-        }
-    }
+        };
 
-    let context = &playback_state_server().await.value;
-
-    if let Some(CurrentPlaybackContext {
-        context: Some(Context { _type, uri, .. }),
-        ..
-    }) = context
-    {
-        let tracks: Option<Vec<(TrackKey, TrackId<'static>)>> = match _type {
+        match _type {
             Type::Playlist => {
                 let Some(id) = uri.strip_prefix("spotify:playlist:") else {
                     error!(
@@ -142,62 +122,87 @@ async fn queue_random_song(last_queued: &mut Option<(TrackKey, usize)>) {
                             .value
                             .weighted_playback_enabled(&id)
                         {
-                            Some(
-                                playlist_tracks_server(id)
-                                    .await
-                                    .value
-                                    .iter()
-                                    .map(|track| {
-                                        (
-                                            TrackKey::from_track(track),
-                                            track
-                                                .id
-                                                .clone()
-                                                .expect("Playlist tracks should have IDs"),
-                                        )
-                                    })
-                                    .collect::<Vec<_>>(),
-                            )
+                            playlist_tracks_server(id)
+                                .await
+                                .value
+                                .iter()
+                                .map(|track| {
+                                    (
+                                        TrackKey::from_track(track),
+                                        track.id.clone().expect("Playlist tracks should have IDs"),
+                                    )
+                                })
+                                .collect::<Vec<_>>()
                         } else {
-                            None
+                            return;
                         }
                     }
                     Err(e) => {
                         warn!("_type = playlist uri ({uri}) should be a playlist id: {e}");
-                        None
+                        return;
                     }
                 }
             }
-            Type::Collection => Some(
-                saved_tracks_server()
-                    .await
-                    .value
-                    .iter()
-                    .map(|(key, track_id)| (key.clone(), track_id.clone()))
-                    .collect::<Vec<_>>(),
-            ),
-            _ => None,
+            Type::Collection => saved_tracks_server()
+                .await
+                .value
+                .iter()
+                .map(|(key, track_id)| (key.clone(), track_id.clone()))
+                .collect::<Vec<_>>(),
+            _ => return,
+        }
+    };
+
+    let ratings = &ratings_server().await.value;
+    let recently_played = &recently_played_server().await.value;
+    let options = &playback_options_server().await.value;
+
+    let queue = queue_server().await;
+
+    for i in 0..(options.queue_size as usize) {
+        let num_in_queue = |track_key: &TrackKey| {
+            queue
+                .value
+                .iter()
+                .filter(|item| {
+                    if let PlayableItem::Track(track) = item
+                        && TrackKey::from_track(track) == *track_key
+                    {
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .count()
         };
 
-        if let Some(tracks) = tracks {
-            let ratings = &ratings_server().await.value;
-            let recently_played = &recently_played_server().await.value;
-            let options = &playback_options_server().await.value;
-            let track = choose_random_song(
-                &tracks,
-                ratings,
-                recently_played,
-                options.selection,
-                options.rating_cutoff,
-                options.default_rating,
-            );
+        // only queue a song if the last one is no longer in the queue
+        if let Some((track_key, times)) = last_queued.get(i) {
+            // we have to guard against the song already having been in the queue before us queuing
+            if num_in_queue(track_key) >= *times {
+                continue;
+            }
+        }
 
-            if let Some((track_key, track_id)) = track {
-                let res = add_to_queue(track_key.clone(), track_id).await;
-                if let Err(e) = res {
-                    warn!("{e}")
+        let track = choose_random_song(
+            &tracks,
+            ratings,
+            recently_played,
+            options.selection,
+            options.rating_cutoff,
+            options.default_rating,
+        );
+
+        if let Some((track_key, track_id)) = track {
+            let res = add_to_queue(track_key.clone(), track_id).await;
+            if let Err(e) = res {
+                warn!("{e}")
+            } else {
+                let val = (track_key.clone(), num_in_queue(&track_key) + 1);
+                if i >= last_queued.len() {
+                    last_queued.push(val);
                 } else {
-                    *last_queued = Some((track_key.clone(), num_in_queue(&track_key) + 1))
+                    last_queued[i] = val;
                 }
             }
         }

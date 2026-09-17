@@ -1148,3 +1148,8 @@ pub async fn playback_rating_cutoff(rating_cutoff: f32) -> Result<()> {
 pub async fn playback_default_rating(default_rating: f32) -> Result<()> {
     update_playback_options(|options| options.default_rating = default_rating.clamp(0.0, 5.0)).await
 }
+
+#[server]
+pub async fn playback_queue_size(queue_size: u8) -> Result<()> {
+    update_playback_options(|options| options.queue_size = queue_size).await
+}

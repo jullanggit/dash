@@ -2,8 +2,8 @@ use crate::{
     assert_authenticated,
     spotify::{
         add_rating, caching::use_server_fn, genres, playback_default_rating, playback_options,
-        playback_rating_cutoff, playback_selection, rating_if_recently_rated as fetch_rating,
-        use_playback_state, weighted_playback,
+        playback_queue_size, playback_rating_cutoff, playback_selection,
+        rating_if_recently_rated as fetch_rating, use_playback_state, weighted_playback,
     },
 };
 use dioxus::prelude::*;
@@ -469,13 +469,14 @@ fn PlaybackOptionsPanel(
         .map(Result::ok)
         .flatten()
         .unwrap_or_default();
-    let (is_enabled, selection, rating_cutoff, default_rating) = (
+    let (is_enabled, selection, rating_cutoff, default_rating, queue_size) = (
         current_playlist_id
             .as_ref()
             .is_some_and(|playlist_id| options.weighted_playback_enabled(playlist_id)),
         options.selection,
         options.rating_cutoff,
         options.default_rating,
+        options.queue_size,
     );
     let is_pending = playback_options.pending();
 
@@ -503,16 +504,16 @@ fn PlaybackOptionsPanel(
                     disabled: current_playlist_id.is_none() || is_pending,
                     style: format!(
                         "
-                                                            position: relative;
-                                                            width: 52px;
-                                                            height: 30px;
-                                                            border-radius: 999px;
-                                                            border: 0;
-                                                            padding: 0;
-                                                            background: {};
-                                                            opacity: {};
-                                                            cursor: {};
-                                                        ",
+                            position: relative;
+                            width: 52px;
+                            height: 30px;
+                            border-radius: 999px;
+                            border: 0;
+                            padding: 0;
+                            background: {};
+                            opacity: {};
+                            cursor: {};
+                        ",
                         if is_enabled { "#1db954" } else { "#4b5563" },
                         if current_playlist_id.is_some() && !is_pending { "1" } else { "0.55" },
                         if current_playlist_id.is_some() && !is_pending {
@@ -536,16 +537,16 @@ fn PlaybackOptionsPanel(
                     span {
                         style: format!(
                             "
-                                                                        position: absolute;
-                                                                        top: 3px;
-                                                                        left: 3px;
-                                                                        width: 24px;
-                                                                        height: 24px;
-                                                                        border-radius: 50%;
-                                                                        background: white;
-                                                                        transform: translateX({});
-                                                                        transition: transform 120ms ease;
-                                                                    ",
+                                position: absolute;
+                                top: 3px;
+                                left: 3px;
+                                width: 24px;
+                                height: 24px;
+                                border-radius: 50%;
+                                background: white;
+                                transform: translateX({});
+                                transition: transform 120ms ease;
+                            ",
                             if is_enabled { "22px" } else { "0" },
                         ),
                     }
@@ -605,6 +606,44 @@ fn PlaybackOptionsPanel(
                     gap: 16px;
                 ",
                 label {
+                        r#for: "playback-queue-size",
+                        style: "font-weight: 600; white-space: nowrap;",
+                        "Queue Size"
+                    }
+                    div { style: "flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;",
+                        input {
+                            id: "playback-queue-size",
+                            r#type: "range",
+                            min: "1",
+                            max: "{10}",
+                            step: "1",
+                            disabled: is_pending,
+                            value: "{queue_size}",
+                            style: "flex: 1; min-width: 0;",
+                            onchange: move |event| {
+                                let value = event.value();
+                                async move {
+                                    let Ok(queue_size) = value.parse::<u8>() else {
+                                        return;
+                                    };
+                                    if let Err(error) = playback_queue_size(queue_size).await {
+                                        error!("Failed to update playback queue size: {error}");
+                                    }
+                                    playback_options.restart();
+                                }
+                            },
+                        }
+                        output { style: "min-width: 3.5ch; text-align: right;", "{queue_size}" }
+                    }
+                }
+                div { style: "
+                        margin-top: 16px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        gap: 16px;
+                    ",
+                    label {
                     r#for: "playback-rating-cutoff",
                     style: "font-weight: 600; white-space: nowrap;",
                     "Min Rating"
