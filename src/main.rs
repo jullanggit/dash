@@ -66,7 +66,10 @@ fn main() {
         Ok(dioxus::server::router(App))
     });
     #[cfg(not(feature = "server"))]
-    dioxus::launch(App);
+    {
+        dioxus::prelude::dioxus_fullstack::set_server_url("https://hot-dog.fly.dev");
+        dioxus::launch(App);
+    }
 }
 
 /// App is the main component of our app. Components are the building blocks of dioxus apps. Each component is a function
