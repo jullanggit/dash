@@ -62,7 +62,7 @@ jobs:
       - name: Locate build outputs
         id: locate
         run: |
-          SERVER_BIN=$(find target/dx -type f -name dash -executable | head -n 1)
+          SERVER_BIN=$(find target/dx -type f -name server -executable | head -n 1)
           PUBLIC_DIR=$(find target/dx -type d -name public | head -n 1)
           echo "server_bin=$SERVER_BIN" >> "$GITHUB_OUTPUT"
           echo "public_dir=$PUBLIC_DIR" >> "$GITHUB_OUTPUT"
