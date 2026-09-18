@@ -48,7 +48,7 @@ jobs:
           mkdir -p "$DX_DIR"
           if [ ! -x "$DX_DIR/dx" ]; then
             curl -L --retry 3 -o "$DX_DIR/dx.tar.gz" \
-              https://github.com/DioxusLabs/dioxus/releases/download/v0.7.3/dx-x86_64-unknown-linux-gnu.tar.gz
+              https://github.com/DioxusLabs/dioxus/releases/download/v0.7.10/dx-x86_64-unknown-linux-gnu.tar.gz
             tar -xf "$DX_DIR/dx.tar.gz" -C "$DX_DIR"
             rm -f "$DX_DIR/dx.tar.gz"
           fi
