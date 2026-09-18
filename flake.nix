@@ -2,16 +2,14 @@
   description = "Dashboard Devshell";
 
   inputs = {
-    host.url = "git+file:///etc/nixos";
-
-    nixpkgs.follows = "host/nixpkgs";
+    nixpkgs.url = "github:nixos/nixpkgs";
 
     rust-overlay = {
-      url = "github:oxalica/rust-overlay";
+      url = "github:oxalica/rust-overlay/860d7c835ab91bfc8972b67092f5f2db8e9390a0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    flake-utils.url = "github:numtide/flake-utils";
+    flake-utils.url = "github:numtide/flake-utils/11707dc2f618dd54ca8739b309ec4fc024de578b";
   };
 
   outputs =
@@ -57,7 +55,7 @@
               dioxus-cli
               vtsls
               eslint
-              swc
+              # swc TODO: reenable once it stops failing to compile
               just
               tombi
               bacon
@@ -68,7 +66,7 @@
               jemalloc-tikv
               podman
             ];
-            JEMALLOC_OVERRIDE = "${jemalloc-tikv}/lib/libjemalloc.a";
+            JEMALLOC_OVERRIDE = "${jemalloc-tikv}/lib/libjemalloc.so";
           };
       }
     );

@@ -1,3 +1,5 @@
+use std::{fmt::Display, str::FromStr};
+
 use crate::{
     assert_authenticated,
     spotify::{
@@ -226,10 +228,7 @@ fn Player(
                                     if i > 0 {
                                         ", "
                                     }
-                                    span {
-                                        style: "color: {genre_color(*weight)};",
-                                        "{genre}"
-                                    }
+                                    span { style: "color: {genre_color(*weight)};", "{genre}" }
                                 }
                             },
                             Some(_) => rsx! {},
@@ -423,15 +422,15 @@ fn HoverSlider(
                 div {
                     style: format!(
                         "
-                                                                                                                                                                                                                                                                            position: absolute;
-                                                                                                                                                                                                                                                                            top: 0;
-                                                                                                                                                                                                                                                                            bottom: 0;
-                                                                                                                                                                                                                                                                            left: {}px;
-                                                                                                                                                                                                                                                                            width: 2px;
-                                                                                                                                                                                                                                                                            background: white;
-                                                                                                                                                                                                                                                                            transform: translateX(-50%);
-                                                                                                                                                                                                                                                                            pointer-events: none;
-                                                                                                                                                                                                                                                                        ",
+                            position: absolute;
+                            top: 0;
+                            bottom: 0;
+                            left: {}px;
+                            width: 2px;
+                            background: white;
+                            transform: translateX(-50%);
+                            pointer-events: none;
+                        ",
                         (displayed_rating / 5.0) * *width.read(),
                     ),
                 }
@@ -483,7 +482,7 @@ fn PlaybackOptionsPanel(
     rsx! {
         div { style: "
                 justify-self: start;
-                width: min(150%, 380px);
+                width: clamp(170px, 150%, 380px);
                 padding: 20px;
                 border: 1px solid #2f2f2f;
                 border-radius: 16px;
@@ -491,6 +490,7 @@ fn PlaybackOptionsPanel(
             ",
             div { style: "
                     display: flex;
+                    flex-wrap: wrap;
                     align-items: center;
                     justify-content: space-between;
                     gap: 16px;
@@ -558,6 +558,7 @@ fn PlaybackOptionsPanel(
                     align-items: center;
                     justify-content: space-between;
                     gap: 16px;
+                    flex_wrap: wrap;
                 ",
                 label {
                     r#for: "playback-selection",
@@ -598,119 +599,144 @@ fn PlaybackOptionsPanel(
                     }
                 }
             }
-            div { style: "
-                    margin-top: 16px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    gap: 16px;
-                ",
-                label {
-                        r#for: "playback-queue-size",
-                        style: "font-weight: 600; white-space: nowrap;",
-                        "Queue Size"
-                    }
-                    div { style: "flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;",
-                        input {
-                            id: "playback-queue-size",
-                            r#type: "range",
-                            min: "1",
-                            max: "{10}",
-                            step: "1",
-                            disabled: is_pending,
-                            value: "{queue_size}",
-                            style: "flex: 1; min-width: 0;",
-                            onchange: move |event| {
-                                let value = event.value();
-                                async move {
-                                    let Ok(queue_size) = value.parse::<u8>() else {
-                                        return;
-                                    };
-                                    if let Err(error) = playback_queue_size(queue_size).await {
-                                        error!("Failed to update playback queue size: {error}");
-                                    }
-                                    playback_options.restart();
-                                }
-                            },
-                        }
-                        output { style: "min-width: 3.5ch; text-align: right;", "{queue_size}" }
-                    }
-                }
-                div { style: "
-                        margin-top: 16px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: space-between;
-                        gap: 16px;
-                    ",
-                    label {
-                    r#for: "playback-rating-cutoff",
-                    style: "font-weight: 600; white-space: nowrap;",
-                    "Min Rating"
-                }
-                div { style: "flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;",
-                    input {
-                        id: "playback-rating-cutoff",
-                        r#type: "range",
-                        min: "0",
-                        max: "5",
-                        step: "0.1",
-                        disabled: is_pending,
-                        value: format!("{rating_cutoff:.1}"),
-                        style: "flex: 1; min-width: 0;",
-                        onchange: move |event| {
-                            let value = event.value();
-                            async move {
-                                let Ok(rating_cutoff) = value.parse::<f32>() else {
-                                    return;
-                                };
-                                if let Err(error) = playback_rating_cutoff(rating_cutoff).await {
-                                    error!("Failed to update playback rating cutoff: {error}");
-                                }
-                                playback_options.restart();
-                            }
-                        },
-                    }
-                    output { style: "min-width: 3.5ch; text-align: right;", "{rating_cutoff:.1}" }
-                }
+            PlaybackSlider {
+                name: "Queue Size",
+                value: queue_size,
+                format: |v| v.to_string(),
+                set_value: playback_queue_size,
+                min: 1,
+                max: 10,
+                step: 1,
+                is_pending,
+                playback_options,
             }
-            div { style: "
-                    margin-top: 16px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    gap: 16px;
-                ",
-                label {
-                    r#for: "playback-default-rating",
-                    style: "font-weight: 600; white-space: nowrap;",
-                    "Default Rating"
-                }
-                div { style: "flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;",
-                    input {
-                        id: "playback-default-rating",
-                        r#type: "range",
-                        min: "0",
-                        max: "5",
-                        step: "0.1",
-                        disabled: is_pending,
-                        value: format!("{default_rating:.1}"),
-                        style: "flex: 1; min-width: 0;",
-                        onchange: move |event| {
-                            let value = event.value();
-                            async move {
-                                let Ok(default_rating) = value.parse::<f32>() else {
-                                    return;
-                                };
-                                if let Err(error) = playback_default_rating(default_rating).await {
-                                    error!("Failed to update default rating: {error}");
-                                }
-                                playback_options.restart();
+            PlaybackSlider {
+                name: "Min Rating",
+                value: rating_cutoff,
+                format: |v| format!("{v:.1}"),
+                set_value: playback_rating_cutoff,
+                min: 0.,
+                max: 5.,
+                step: 0.1,
+                is_pending,
+                playback_options,
+            }
+            PlaybackSlider {
+                name: "Default Rating",
+                value: default_rating,
+                format: |v| format!("{v:.1}"),
+                set_value: playback_default_rating,
+                min: 0.,
+                max: 5.,
+                step: 0.1,
+                is_pending,
+                playback_options,
+            }
+        }
+    }
+}
+
+#[derive(Clone, Props)]
+struct PlaybackSliderProps<T, Fmt, Set>
+where
+    T: Copy + PartialEq + FromStr + 'static,
+    Fmt: Fn(T) -> String + Copy + 'static,
+    Set: AsyncFn(T) -> Result<()> + Copy + 'static,
+{
+    name: &'static str,
+    value: T,
+    format: Fmt,
+    set_value: Set,
+    min: T,
+    max: T,
+    step: T,
+    is_pending: bool,
+    playback_options: Resource<Result<crate::spotify::playback::PlaybackOptions>>,
+}
+impl<T, Fmt, Set> PartialEq for PlaybackSliderProps<T, Fmt, Set>
+where
+    T: Copy + PartialEq + FromStr + 'static,
+    Fmt: Fn(T) -> String + Copy + 'static,
+    Set: AsyncFn(T) -> Result<()> + Copy + 'static,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.value == other.value
+            && self.min == other.min
+            && self.max == other.max
+            && self.step == other.step
+            && self.is_pending == other.is_pending
+            && self.playback_options == other.playback_options
+        // these cannot be compared and are assumed to always stay the same
+        // && self.format == other.format
+        // && self.set_value == other.set_value
+    }
+}
+
+#[component]
+fn PlaybackSlider<T, Fmt, Set>(props: PlaybackSliderProps<T, Fmt, Set>) -> Element
+where
+    T: Copy + PartialEq + FromStr + 'static + Display,
+    Fmt: Fn(T) -> String + Copy + 'static,
+    Set: AsyncFn(T) -> Result<()> + Copy + 'static,
+{
+    let PlaybackSliderProps {
+        name,
+        value,
+        format,
+        set_value,
+        min,
+        max,
+        step,
+        is_pending,
+        mut playback_options,
+    } = props;
+
+    let fmt = format(value);
+    let ident = name.to_lowercase().replace(' ', "-");
+    rsx! {
+        div {
+            margin_top: "16px",
+            display: "flex",
+            align_items: "center",
+            justify_content: "space-between",
+            flex_wrap: "wrap",
+
+            label { font_weight: 600, white_space: "nowrap", r#for: &ident, "{name}" }
+            div {
+                flex: true,
+                display: "flex",
+                align_items: "center",
+                min_width: "100px",
+                max_width: "200px",
+
+                input {
+                    id: ident,
+                    r#type: "range",
+                    min: "{min}",
+                    max: "{max}",
+                    step: "{step}",
+                    disabled: is_pending,
+                    value: fmt,
+
+                    flex: true,
+                    min_width: "100px",
+                    max_width: "200px",
+
+                    onchange: move |event| {
+                        let value = event.value();
+                        async move {
+                            let Ok(new_value) = value.parse::<T>() else {
+                                return;
+                            };
+                            if let Err(error) = set_value(new_value).await {
+                                error!("Failed to update {name}: {error}");
                             }
-                        },
-                    }
-                    output { style: "min-width: 3.5ch; text-align: right;", "{default_rating:.1}" }
+                            playback_options.restart();
+                        }
+                    },
                 }
+                output { style: "min-width: 3.5ch; text-align: right;", "{fmt}" }
             }
         }
     }
