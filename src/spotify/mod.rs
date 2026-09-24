@@ -7,3 +7,4 @@ pub use api::*;
 pub mod analyze;
 pub mod caching;
 pub mod playback;
+mod rlog;
