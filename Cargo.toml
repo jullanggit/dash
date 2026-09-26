@@ -16,6 +16,7 @@ dioxus = { version = "0.7.1", features = ["fullstack", "router"] }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", default-features = false }
 dioxus-sdk-time = "0.7.0"
 futures = { version = "0.3.32", default-features = false }
+persister = { version = "0.2.0", default-features = false, features = ["json"] }
 rand = { version = "0.10.0", optional = true }
 rand_core = { version = "0.6.4", features = ["getrandom"], optional = true }
 rspotify = {

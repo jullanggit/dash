@@ -4,6 +4,7 @@
 #![feature(const_trait_impl)]
 #![feature(const_default)]
 #![feature(smart_pointer_try_map)]
+#![feature(iter_collect_into)]
 
 #[cfg(feature = "server")]
 #[global_allocator]

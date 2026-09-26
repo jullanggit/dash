@@ -1,11 +1,12 @@
 #[cfg(feature = "server")]
-use crate::spotify::caching::Cache;
+use crate::spotify::{caching::Cache, rlog::RLOG};
 use crate::{
     caching, caching_hashmap,
     spotify::{
         analyze::{Analyzation, RATING_OVERWRITE_WINDOW, TrackAnalyzation, TrackKey},
         caching::use_server_fn,
         playback::{PlaybackOptions, PlaybackSelection},
+        rlog::Rating,
     },
 };
 use dioxus::{fullstack::reqwest, prelude::*};
@@ -24,7 +25,8 @@ use rspotify_http::BaseHttpClient;
 use rspotify_model::Page;
 use rspotify_model::{
     ArtistId, CurrentPlaybackContext, FullArtist, FullTrack, PlayHistory, PlayableId, PlayableItem,
-    PlaylistId, PlaylistItem, PlaylistTracksRef, PrivateUser, SimplifiedPlaylist, TrackId,
+    PlaylistId, PlaylistItem, PlaylistTracksRef, PrivateUser, SearchResult, SearchType,
+    SimplifiedPlaylist, TrackId,
 };
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
@@ -33,6 +35,7 @@ use std::{
     collections::HashMap,
     fmt::{self, Display, Formatter},
     iter,
+    ops::DerefMut,
     sync::{LazyLock, OnceLock},
 };
 #[cfg(feature = "server")]
@@ -399,6 +402,10 @@ caching!(
             }
         }
 
+        {
+            RLOG.lock().unwrap().sync(&mut ratings);
+        }
+
         let mut analyzation = analyze(ratings).await;
         analyzation.playlist_snapshot_ids = current_snapshot_ids;
         analyzation.last_full_refetch = last_full_refetch;
@@ -707,88 +714,6 @@ async fn full_track_maybe_cached(
     .map_err(Into::into)
 }
 
-#[cfg(feature = "server")]
-async fn update_rating_caches(
-    playlist: &SimplifiedPlaylist,
-    track: &FullTrack,
-    rating: f32,
-) -> Result<f32> {
-    use std::sync::Arc;
-
-    use crate::spotify::analyze::analyze;
-
-    {
-        use crate::spotify::caching::Cache;
-
-        let res = RATING_PLAYLISTS
-            .update_cache(&(), |playlists| {
-                let mut playlists = playlists.cloned().unwrap_or_default();
-                match playlists.iter_mut().find(|(r, _)| *r == rating) {
-                    Some((_, group)) => {
-                        if !group.iter().any(|p| p.id == playlist.id) {
-                            group.push(playlist.clone());
-                            group.sort_unstable_by_key(|p| p.items.total);
-                        }
-                    }
-                    None => {
-                        playlists.push((rating, vec![playlist.clone()]));
-                    }
-                }
-
-                Some(playlists)
-            })
-            .await;
-
-        if let Err(e) = res {
-            warn!("Failed to update rating playlists disk cache: {e}");
-        }
-    }
-
-    let res = PLAYLIST_ITEMS
-        .update_cache(&playlist.id, |items| {
-            match items {
-                Some(items) => {
-                    let mut items = items.clone();
-                    items.insert(0, track.clone());
-                    Some(items)
-                }
-                None if playlist.items.total == 0 => Some(vec![track.clone()]),
-                // playlist is not known to be empty, wait for next refetch for source of truth
-                None => None,
-            }
-        })
-        .await;
-    if let Err(e) = res {
-        warn!("Failed to update playlist items to disk cache: {e}")
-    }
-
-    use crate::spotify::analyze::TrackKey;
-
-    let mut cached_ratings =
-        Arc::unwrap_or_clone(RATINGS.read_cache(&()).await.unwrap_or_default());
-
-    let track_key = TrackKey::from_track(track);
-    let entry = cached_ratings
-        .value
-        .tracks
-        .entry(track_key)
-        .or_insert_with(|| (track.clone(), TrackAnalyzation::default()));
-    entry.1.rating_history.push((UtcDateTime::now(), rating));
-
-    cached_ratings.value = analyze(cached_ratings.value.tracks.clone()).await;
-
-    let canonical_rating = cached_ratings
-        .value
-        .rating(&TrackKey::from_track(track))
-        .expect("track was just analyzed so it should be present");
-
-    if let Err(e) = RATINGS.write_cache(&(), Arc::new(cached_ratings)).await {
-        warn!("Failed to update ratings disk cache: {e}");
-    }
-
-    Ok(canonical_rating)
-}
-
 /// Returns the canonical rating, if there was a rating within the [RATING_OVERWRITE_WINDOW]
 #[server]
 pub async fn rating_if_recently_rated(track_key: TrackKey) -> Result<Option<f32>> {
@@ -812,34 +737,43 @@ pub async fn add_rating(
     track_id: TrackId<'static>,
     rating: f32,
 ) -> Result<f32> {
+    use crate::spotify::analyze::analyze;
+    use std::sync::Arc;
+
     crate::assert_authenticated!();
     let rating = (rating * 100.0).round() / 100.0;
-    let playlist = get_or_create_playlist(rating).await?;
-    let cached_ratings = ratings_server().await;
+
+    let timestamp = UtcDateTime::now();
+
+    let mut cached_ratings =
+        Arc::unwrap_or_clone(RATINGS.read_cache(&()).await.unwrap_or_default());
+
     let track = full_track_maybe_cached(&track_key, &track_id, &cached_ratings.value).await?;
 
-    let spotify = spotify().await;
-    retrying(
-        move |(spotify, playlist_id, track_id)| async move {
-            spotify
-                .playlist_add_items(
-                    playlist_id,
-                    iter::once(PlayableId::Track(track_id.as_ref())),
-                    Some(0),
-                )
-                .await
-        },
-        (spotify, playlist.id.clone(), track_id.clone()),
-        RequestPermit::Playlists,
-    )
-    .await
-    .with_context(|| {
-        format!(
-            "Failed to add track {track_id} to rating playlist {}",
-            playlist.id
-        )
-    })?;
-    update_rating_caches(&playlist, &track, rating).await
+    let entry = cached_ratings
+        .value
+        .tracks
+        .entry(track_key.clone())
+        .or_insert_with(|| (track.clone(), TrackAnalyzation::default()));
+    entry.1.rating_history.push((timestamp, rating));
+
+    {
+        // add to Analyzation and sync back to rlog because the other direction might have to fetch the fulltrack
+        RLOG.lock().unwrap().sync(&mut cached_ratings.value.tracks);
+    }
+
+    cached_ratings.value = analyze(cached_ratings.value.tracks.clone()).await;
+
+    let canonical_rating = cached_ratings
+        .value
+        .rating(&track_key)
+        .expect("track was just analyzed so it should be present");
+
+    if let Err(e) = RATINGS.write_cache(&(), Arc::new(cached_ratings)).await {
+        warn!("Failed to update ratings disk cache: {e}");
+    }
+
+    Ok(canonical_rating)
 }
 
 caching_hashmap!(
