@@ -90,6 +90,8 @@ RequestPermits!(
     Artists,
     // /me
     Me,
+    // /search
+    Search,
     // last.fm track.getTopTags
     LastFmTopTags
 );
@@ -861,6 +863,52 @@ caching_hashmap!(
     },
     ARTISTS,
     Duration::weeks(4) // assume artists are mostly static
+);
+
+caching_hashmap!(
+    track_key_to_full_track,
+    TrackKey,
+    Option<FullTrack>,
+    |track_key, _| async move {
+        info!("Searching for track {track_key}");
+
+        let spotify = spotify().await;
+
+        retrying(
+            move |track_key| async move {
+                let search_result = spotify
+                    .search(
+                        &format!("{} {}", track_key.name, track_key.artists[0]),
+                        SearchType::Track,
+                        None,
+                        None,
+                        Some(10),
+                        None,
+                    )
+                    .await?;
+
+                if let SearchResult::Tracks(tracks) = search_result {
+                    Ok(tracks.items.into_iter().find(|track| {
+                        track.name == track_key.name
+                            && track.artists.len() == track_key.artists.len()
+                            && track
+                                .artists
+                                .iter()
+                                .all(|artist| track_key.artists.contains(&artist.name))
+                    }))
+                } else {
+                    error!("Non-track result for track search");
+                    Ok(None)
+                }
+            },
+            track_key.clone(),
+            RequestPermit::Artists,
+        )
+        .await
+        .with_context(|| format!("Failed to search for track {track_key}"))
+    },
+    TRACK_KEY_TO_FULL_TRACK,
+    Duration::weeks(4) // assume tracks are mostly static
 );
 
 pub async fn genres(track: &FullTrack) -> HashMap<String, f32> {
