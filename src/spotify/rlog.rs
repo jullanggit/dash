@@ -33,6 +33,7 @@ impl RatingLog {
         let path = home_dir()
             .ok_or(anyhow::anyhow!("Failed to get home dir"))?
             .join(".local/share/dash/rating-log.json");
+        std::fs::create_dir_all(path.parent())?;
         Ok(Self {
             entries: Persister::open_with(path)
                 .codec(Codec::Json)
