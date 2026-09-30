@@ -403,7 +403,7 @@ caching!(
         }
 
         {
-            RLOG.lock().unwrap().sync(&mut ratings);
+            RLOG.lock().await.sync(&mut ratings).await?;
         }
 
         let mut analyzation = analyze(ratings).await;
@@ -759,7 +759,10 @@ pub async fn add_rating(
 
     {
         // add to Analyzation and sync back to rlog because the other direction might have to fetch the fulltrack
-        RLOG.lock().unwrap().sync(&mut cached_ratings.value.tracks);
+        RLOG.lock()
+            .await
+            .sync(&mut cached_ratings.value.tracks)
+            .await?;
     }
 
     cached_ratings.value = analyze(cached_ratings.value.tracks.clone()).await;

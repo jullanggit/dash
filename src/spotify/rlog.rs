@@ -1,14 +1,14 @@
 //! rating log
 
-#[cfg(feature = "server")]
-use std::sync::Mutex;
 use std::{collections::HashMap, env::home_dir, sync::LazyLock};
 
-use dioxus::prelude::warn;
+use dioxus::prelude::{info, warn};
 use persister::{Codec, Persister};
 use rspotify_model::{FullTrack, SimplifiedArtist};
 use serde::{Deserialize, Serialize};
 use time::UtcDateTime;
+#[cfg(feature = "server")]
+use tokio::sync::Mutex;
 
 use crate::spotify::analyze::{Analyzation, TrackAnalyzation, TrackKey};
 
@@ -33,7 +33,7 @@ impl RatingLog {
         let path = home_dir()
             .ok_or(anyhow::anyhow!("Failed to get home dir"))?
             .join(".local/share/dash/rating-log.json");
-        std::fs::create_dir_all(path.parent())?;
+        std::fs::create_dir_all(path.parent().unwrap())?;
         Ok(Self {
             entries: Persister::open_with(path)
                 .codec(Codec::Json)
@@ -65,6 +65,8 @@ impl RatingLog {
             .sort_unstable_by_key(|Rating { timestamp, .. }| *timestamp);
         self.entries.dedup();
 
+        self.entries.save()?;
+
         for (_, (_, track_analyzation)) in spotify_ratings.iter_mut() {
             track_analyzation.rating_history.clear();
         }
@@ -86,7 +88,7 @@ impl RatingLog {
             entry.1.rating_history.push((*timestamp, *value));
         }
 
-        self.entries.save()
+        Ok(())
     }
 }
 
