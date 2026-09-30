@@ -123,48 +123,34 @@ fn dedupe_rating_history(rating_history: &mut Vec<(UtcDateTime, f32)>) {
 pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     use crate::spotify::genres;
 
+    const HALF_LIFE: Duration = Duration::weeks(26);
+
     trace!("Analyzing ratings");
 
-    fn canonical_rating(rating_history: impl IntoIterator<Item = (f32, UtcDateTime)>) -> f32 {
-        const HALF_LIFE: Duration = Duration::weeks(26);
-
-        let now = UtcDateTime::now();
-        let (weighted_sum, weight_sum) = rating_history.into_iter().fold(
-            (0., 0.),
-            |(weighted_sum, weight_sum), (rating, time)| {
-                let delta = now - time;
-                let weight = 0.5_f64.powf(delta / HALF_LIFE) as f32;
-
-                (weighted_sum + rating * weight, weight_sum + weight)
-            },
-        );
-
-        weighted_sum / weight_sum
-    }
+    let now = UtcDateTime::now();
 
     // track analyzations
     for (_key, (track, analyzation)) in &mut tracks {
         dedupe_rating_history(&mut analyzation.rating_history);
 
-        analyzation.canonical_rating_history = (1..=analyzation.rating_history.len())
-            .map(|i| {
-                (
-                    analyzation.rating_history[i - 1].0,
-                    canonical_rating(
-                        analyzation
-                            .rating_history
-                            .iter()
-                            .take(i)
-                            .map(|&(time, rating)| (rating, time)),
-                    ),
-                )
+        let mut weighted_sum = 0.;
+        let mut weight_sum = 0.;
+        let canonical_rating_history = analyzation
+            .rating_history
+            .iter()
+            .map(|&(time, rating)| {
+                let weight = 0.5_f64.powf((now - time) / HALF_LIFE) as f32;
+                weighted_sum += rating * weight;
+                weight_sum += weight;
+                (time, weighted_sum / weight_sum)
             })
-            .collect();
-        analyzation.canonical_rating = analyzation
-            .canonical_rating_history
+            .collect::<Vec<_>>();
+
+        analyzation.canonical_rating = canonical_rating_history
             .last()
             .map(|(_, rating)| *rating)
             .expect("a to-be-analyzed track should have a rating");
+        analyzation.canonical_rating_history = canonical_rating_history;
 
         analyzation.genres = genres(track).await;
     }
