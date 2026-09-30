@@ -26,7 +26,7 @@ use rspotify_model::Page;
 use rspotify_model::{
     ArtistId, CurrentPlaybackContext, FullArtist, FullTrack, PlayHistory, PlayableId, PlayableItem,
     PlaylistId, PlaylistItem, PlaylistTracksRef, PrivateUser, SearchResult, SearchType,
-    SimplifiedPlaylist, TrackId,
+    SimplifiedArtist, SimplifiedPlaylist, TrackId,
 };
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
@@ -800,58 +800,92 @@ caching_hashmap!(
     Duration::weeks(4) // assume artists are mostly static
 );
 
-pub async fn genres(track: &FullTrack) -> HashMap<String, f32> {
+/// Memoizes each artist's genre contribution across the tracks of a single analysis pass.
+pub type ArtistGenreCache = HashMap<(Option<ArtistId<'static>>, String), HashMap<String, f32>>;
+
+/// Dedupe genre contributions across sources: keep the highest weight.
+fn add_genres(
+    genres: &mut HashMap<String, f32>,
+    new_genres: impl IntoIterator<Item = (String, f32)>,
+) {
+    for (genre, weight) in new_genres {
+        let entry = genres.entry(genre.to_lowercase()).or_default();
+        *entry = entry.max(weight);
+    }
+}
+
+/// Genre contribution of a single artist: Spotify genres plus last.fm artist tags.
+///
+/// This is independent of the track, so it can be memoized in an [`ArtistGenreCache`].
+async fn artist_genres(artist: &SimplifiedArtist) -> HashMap<String, f32> {
     let mut genres = HashMap::new();
 
-    fn add_genres(
-        genres: &mut HashMap<String, f32>,
-        new_genres: impl IntoIterator<Item = (String, f32)>,
-    ) {
-        for (genre, weight) in new_genres {
-            // dedupe across sources: keep the highest weight
-            let entry = genres.entry(genre.to_lowercase()).or_default();
-            *entry = entry.max(weight);
-        }
-    }
-
-    for (i, artist) in track.artists.iter().enumerate() {
-        if let Some(artist_id) = artist.id.clone().map(ArtistId::into_static) {
-            #[cfg(feature = "server")]
-            let full_artist = full_artist_server(artist_id).await.value.clone();
-            #[cfg(not(feature = "server"))]
-            let full_artist = match full_artist(artist_id).await {
-                Ok(artist) => artist,
-                Err(e) => {
-                    error!("Failed to fetch artist {}: {e}", artist.name);
-                    continue;
-                }
-            };
-            // artist-granularity genres are less specific, so they count 70%
-            add_genres(
-                &mut genres,
-                full_artist.genres.into_iter().map(|genre| (genre, 0.7)),
-            );
-        }
-
+    if let Some(artist_id) = artist.id.clone().map(ArtistId::into_static) {
         #[cfg(feature = "server")]
-        let lastfm_artist_genres = lastfm_artist_top_tags_server(artist.name.clone())
-            .await
-            .value
-            .clone();
+        let full_artist = full_artist_server(artist_id).await.value.clone();
         #[cfg(not(feature = "server"))]
-        let lastfm_artist_genres = match lastfm_artist_top_tags(artist.name.clone()).await {
-            Ok(genres) => genres,
+        let full_artist = match full_artist(artist_id).await {
+            Ok(artist) => artist,
             Err(e) => {
-                error!("Failed to fetch last.fm artist genres: {e}");
-                Vec::new()
+                error!("Failed to fetch artist {}: {e}", artist.name);
+                return genres;
             }
         };
+        // artist-granularity genres are less specific, so they count 70%
         add_genres(
             &mut genres,
-            lastfm_artist_genres
-                .into_iter()
-                .map(|tag| (tag.name, 0.7 * tag.count as f32 / 100.0)), // 100 = max
+            full_artist.genres.into_iter().map(|genre| (genre, 0.7)),
         );
+    }
+
+    #[cfg(feature = "server")]
+    let lastfm_artist_genres = lastfm_artist_top_tags_server(artist.name.clone())
+        .await
+        .value
+        .clone();
+    #[cfg(not(feature = "server"))]
+    let lastfm_artist_genres = match lastfm_artist_top_tags(artist.name.clone()).await {
+        Ok(genres) => genres,
+        Err(e) => {
+            error!("Failed to fetch last.fm artist genres: {e}");
+            Vec::new()
+        }
+    };
+    add_genres(
+        &mut genres,
+        lastfm_artist_genres
+            .into_iter()
+            .map(|tag| (tag.name, 0.7 * tag.count as f32 / 100.0)), // 100 = max
+    );
+
+    genres
+}
+
+pub async fn genres(track: &FullTrack) -> HashMap<String, f32> {
+    genres_cached(track, &mut ArtistGenreCache::new()).await
+}
+
+/// Like [`genres`], but reuses the artist-level lookups memoized in `artist_cache`.
+pub async fn genres_cached(
+    track: &FullTrack,
+    artist_cache: &mut ArtistGenreCache,
+) -> HashMap<String, f32> {
+    let mut genres = HashMap::new();
+
+    for (i, artist) in track.artists.iter().enumerate() {
+        let key = (
+            artist.id.clone().map(ArtistId::into_static),
+            artist.name.clone(),
+        );
+        let contribution = match artist_cache.get(&key) {
+            Some(cached) => cached.clone(),
+            None => {
+                let computed = artist_genres(artist).await;
+                artist_cache.insert(key, computed.clone());
+                computed
+            }
+        };
+        add_genres(&mut genres, contribution);
 
         // only fetch track genres for the first artist
         if i == 0 {

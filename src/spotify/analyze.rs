@@ -121,13 +121,16 @@ fn dedupe_rating_history(rating_history: &mut Vec<(UtcDateTime, f32)>) {
 /// Build analyzation based on tracks and rating histories
 #[cfg(feature = "server")]
 pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
-    use crate::spotify::genres;
+    use crate::spotify::{ArtistGenreCache, genres_cached};
 
     const HALF_LIFE: Duration = Duration::weeks(26);
 
     trace!("Analyzing ratings");
 
     let now = UtcDateTime::now();
+
+    // Genre lookups depend only on the artist, so share one cache across the whole pass.
+    let mut artist_genre_cache = ArtistGenreCache::new();
 
     // track analyzations
     for (_key, (track, analyzation)) in &mut tracks {
@@ -152,7 +155,7 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
             .expect("a to-be-analyzed track should have a rating");
         analyzation.canonical_rating_history = canonical_rating_history;
 
-        analyzation.genres = genres(track).await;
+        analyzation.genres = genres_cached(track, &mut artist_genre_cache).await;
     }
 
     // cross-track analyzations
