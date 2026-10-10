@@ -16,6 +16,7 @@ pub fn Navbar() -> Element {
     {
         let authenticated = use_server_future(|| async { auth::assert_authenticated().await })?;
         if authenticated() != Some(Ok(())) {
+            use_navigator().push(Route::Login {});
             return rsx! {};
         }
     }
