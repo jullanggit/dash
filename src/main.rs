@@ -76,8 +76,6 @@ fn main() {
 /// Components should be annotated with `#[component]` to support props, better error messages, and autocomplete
 #[component]
 fn App() -> Element {
-    let navigator = use_navigator();
-
     // The `rsx!` macro lets us define HTML inside of rust. It expands to an Element with all of our HTML inside.
     rsx! {
         // In addition to element and text (which we will see later), rsx can contain other components. In this case,
@@ -86,20 +84,8 @@ fn App() -> Element {
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
 
-        ErrorBoundary {
-            handle_error: move |err: ErrorContext| {
-                // Check if the error is an authentication failure
-                if let Some(err) = err.error()
-                    && let Some(ServerFnError::ServerError { code, message, .. }) = err
-                        .downcast_ref() && *code == 401 && message == "unauthenticated"
-                {
-                    navigator.push(Route::Login {});
-                }
-                rsx! {}
-            },
-            // The router component renders the route enum we defined above. It will handle synchronization of the URL and render
-            // the layouts and components for the active route.
-            Router::<Route> {}
-        }
+        // The router component renders the route enum we defined above. It will handle synchronization of the URL and render
+        // the layouts and components for the active route.
+        Router::<Route> {}
     }
 }
