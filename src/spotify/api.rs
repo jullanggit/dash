@@ -916,7 +916,10 @@ pub async fn genres_cached(
     }
 
     // cleanup
-    genres.remove(&track.name.to_lowercase());
+    genres.retain(|genre, _| {
+        genre != &track.name.to_lowercase()
+            && !genre.chars().take(2).all(|char| char.is_ascii_digit()) // years/decades
+    });
 
     genres
 }
