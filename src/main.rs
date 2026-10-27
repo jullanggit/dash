@@ -59,7 +59,13 @@ fn main() {
         use crate::spotify::{playback::handle_weighted_playback, scrobble};
 
         tokio::spawn(handle_weighted_playback());
-        tokio::spawn(scrobble());
+        tokio::spawn(async {
+            if let Err(e) = scrobble().await {
+                error!("Failed to scrobble: {e}");
+            } else {
+                unreachable!("scrobble only returns on error");
+            }
+        });
 
         Ok(dioxus::server::router(App))
     });
