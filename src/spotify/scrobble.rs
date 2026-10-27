@@ -26,7 +26,7 @@ impl ScrobbleLog {
             entries: Persister::open_with(path)
                 .codec(Codec::Json)
                 .auto_save(true)
-                .create_default()?,
+                .open()?,
         };
         out.sort();
 
