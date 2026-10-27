@@ -123,7 +123,9 @@ fn dedupe_rating_history(rating_history: &mut Vec<(UtcDateTime, f32)>) {
 pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     use crate::spotify::{ArtistGenreCache, genres_cached};
 
-    const HALF_LIFE: Duration = Duration::weeks(26);
+    const MIN_HALF_LIFE: Duration = Duration::days(3);
+    const MAX_HALF_LIFE: Duration = Duration::weeks(52 / 2);
+    const MATURITY_TIME: Duration = Duration::weeks(4 * 3);
 
     trace!("Analyzing ratings");
 
@@ -136,13 +138,23 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     for (track, analyzation) in tracks.values_mut() {
         dedupe_rating_history(&mut analyzation.rating_history);
 
+        let Some(first_rating) = analyzation.rating_history.first() else {
+            continue;
+        };
+
         let mut weighted_sum = 0.;
         let mut weight_sum = 0.;
         let canonical_rating_history = analyzation
             .rating_history
             .iter()
             .map(|&(time, rating)| {
-                let weight = 0.5_f64.powf((now - time) / HALF_LIFE) as f32;
+                // TODO: use amount of listens as a more accurate proxy for familiarity
+                let time_known = time - first_rating.0;
+                let maturity_fraction = (time_known / MATURITY_TIME).clamp(0., 1.);
+                let half_life =
+                    (MIN_HALF_LIFE + (MAX_HALF_LIFE - MIN_HALF_LIFE) * maturity_fraction);
+
+                let weight = 0.5_f64.powf((now - time) / half_life) as f32;
                 weighted_sum += rating * weight;
                 weight_sum += weight;
                 (time, weighted_sum / weight_sum)
