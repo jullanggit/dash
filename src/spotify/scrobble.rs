@@ -55,13 +55,16 @@ pub async fn scrobble() -> anyhow::Result<()> {
         if let Some(CurrentPlaybackContext {
             is_playing: true,
             item: Some(PlayableItem::Track(ref fulltrack)),
+            progress: Some(progress),
             ..
         }) = playback_state_server().await.value
+            // guard against stale cache
+            && !matches!(last_track, Some((_, p)) if p == progress)
         {
             let now = UtcDateTime::now();
             let track = TrackKey::from_track(fulltrack);
 
-            let duration_played = if last_track.as_ref() == Some(&track) {
+            let duration_played = if matches!(last_track, Some((t, _)) if t == track) {
                 PLAYBACK_STATE_INTERVAL
             } else {
                 PLAYBACK_STATE_INTERVAL / 2 // wasn't playing before, take average
@@ -78,9 +81,9 @@ pub async fn scrobble() -> anyhow::Result<()> {
                 });
             }
 
-            last_track = Some(track);
+            last_track = Some((track, progress));
 
-            if last_persist + tokio::time::Duration::from_mins(1) < now {
+            if last_persist + tokio::time::Duration::from_secs(30) < now {
                 slog.save()?;
                 last_persist = now;
             }
