@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use time::UtcDateTime;
 use tokio::time::sleep;
 
-use crate::spotify::{PLAYBACK_STATE_INTERVAL, analyze::TrackKey, playback_state_server};
+use crate::spotify::{
+    PLAYBACK_STATE_INTERVAL, analyze::TrackKey, caching::WithLastFetched, playback_state_server,
+};
 
 struct ScrobbleLog {
     /// sorted by start time
@@ -50,21 +52,21 @@ pub async fn scrobble() -> anyhow::Result<()> {
     let mut slog = ScrobbleLog::open()?;
 
     let mut last_persist = UtcDateTime::now();
+    let mut last_last_fetched = UtcDateTime::MIN;
     let mut last_track = None;
     loop {
-        if let Some(CurrentPlaybackContext {
+        if let WithLastFetched { last_fetched, value: Some(CurrentPlaybackContext {
             is_playing: true,
-            item: Some(PlayableItem::Track(ref fulltrack)),
-            progress: Some(progress),
+            item: Some(PlayableItem::Track(fulltrack)),
             ..
-        }) = playback_state_server().await.value
+        })} = playback_state_server().await.as_ref()
             // guard against stale cache
-            && !matches!(last_track, Some((_, p)) if p == progress)
+            && *last_fetched > last_last_fetched
         {
             let now = UtcDateTime::now();
             let track = TrackKey::from_track(fulltrack);
 
-            let duration_played = if matches!(last_track, Some((t, _)) if t == track) {
+            let duration_played = if last_track.as_ref() == Some(&track) {
                 PLAYBACK_STATE_INTERVAL
             } else {
                 PLAYBACK_STATE_INTERVAL / 2 // wasn't playing before, take average
@@ -81,9 +83,10 @@ pub async fn scrobble() -> anyhow::Result<()> {
                 });
             }
 
-            last_track = Some((track, progress));
+            last_track = Some(track);
+            last_last_fetched = *last_fetched;
 
-            if last_persist + tokio::time::Duration::from_secs(30) < now {
+            if last_persist + tokio::time::Duration::from_mins(1) < now {
                 slog.save()?;
                 last_persist = now;
             }
