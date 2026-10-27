@@ -1,9 +1,5 @@
 #![feature(macro_metavar_expr_concat)]
-#![feature(iter_intersperse)]
-#![feature(option_reference_flattening)]
 #![feature(const_trait_impl)]
-#![feature(const_default)]
-#![feature(smart_pointer_try_map)]
 #![feature(iter_collect_into)]
 
 #[cfg(feature = "server")]
@@ -60,9 +56,10 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 fn main() {
     #[cfg(feature = "server")]
     dioxus::serve(|| async move {
-        use crate::spotify::playback::handle_weighted_playback;
+        use crate::spotify::{playback::handle_weighted_playback, scrobble};
 
         tokio::spawn(handle_weighted_playback());
+        tokio::spawn(scrobble());
 
         Ok(dioxus::server::router(App))
     });

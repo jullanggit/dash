@@ -593,7 +593,7 @@ fn proportions_with_scores(
 pub fn genre_proportions(data: &Analyzation) -> Chart {
     let mut genre_counts: HashMap<String, (f32, u32)> = HashMap::new();
 
-    for (_, (_, analyzation)) in &data.tracks {
+    for (_, analyzation) in data.tracks.values() {
         for (genre, genre_weight) in &analyzation.genres {
             let (acc, num) = genre_counts.entry(genre.clone()).or_insert((0.0, 0));
             *acc += weight(analyzation.canonical_rating) * genre_weight;
@@ -614,7 +614,7 @@ pub fn genre_proportions(data: &Analyzation) -> Chart {
 pub fn artist_proportions(data: &Analyzation) -> Chart {
     let mut artist_counts: HashMap<String, (f32, u32)> = HashMap::new();
 
-    for (_, (track, analyzation)) in &data.tracks {
+    for (track, analyzation) in data.tracks.values() {
         let track_weight = weight(analyzation.canonical_rating);
 
         for artist in &track.artists {

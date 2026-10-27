@@ -2,7 +2,7 @@ use crate::{caching, spotify::caching::use_server_fn};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use time::{Duration, UtcDateTime};
+use time::Duration;
 
 caching!(
     config,

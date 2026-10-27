@@ -4,12 +4,10 @@ use anyhow::Context;
 use persister::{Codec, Persister};
 use rspotify_model::{CurrentPlaybackContext, PlayableItem};
 use serde::{Deserialize, Serialize};
-use time::{Duration, UtcDateTime};
-use tokio::time::{Instant, sleep};
+use time::UtcDateTime;
+use tokio::time::sleep;
 
-use crate::spotify::{
-    PLAYBACK_STATE_INTERVAL, analyze::TrackKey, lastfm_top_tags_server, playback_state_server,
-};
+use crate::spotify::{PLAYBACK_STATE_INTERVAL, analyze::TrackKey, playback_state_server};
 
 struct ScrobbleLog {
     /// sorted by start time

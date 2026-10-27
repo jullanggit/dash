@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, env::home_dir, sync::LazyLock};
 
-use dioxus::prelude::{info, warn};
+use dioxus::prelude::warn;
 use persister::{Codec, Persister};
 use rspotify_model::{FullTrack, SimplifiedArtist};
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use time::UtcDateTime;
 #[cfg(feature = "server")]
 use tokio::sync::Mutex;
 
-use crate::spotify::analyze::{Analyzation, TrackAnalyzation, TrackKey};
+use crate::spotify::analyze::{TrackAnalyzation, TrackKey};
 
 #[cfg(feature = "server")]
 pub static RLOG: LazyLock<Mutex<RatingLog>> =
@@ -56,7 +56,7 @@ impl RatingLog {
                     .map(move |&(timestamp, value)| Rating {
                         track: track.clone(),
                         value,
-                        timestamp: timestamp.clone(),
+                        timestamp,
                     })
             });
         spotify_log.collect_into(&mut (*self.entries));
@@ -67,7 +67,7 @@ impl RatingLog {
 
         self.entries.save()?;
 
-        for (_, (_, track_analyzation)) in spotify_ratings.iter_mut() {
+        for (_, track_analyzation) in spotify_ratings.values_mut() {
             track_analyzation.rating_history.clear();
         }
 
@@ -92,6 +92,7 @@ impl RatingLog {
     }
 }
 
+#[expect(deprecated)]
 fn make_dummy_fulltrack(track: TrackKey) -> FullTrack {
     FullTrack {
         id: None,

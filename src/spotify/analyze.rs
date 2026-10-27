@@ -133,7 +133,7 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     let mut artist_genre_cache = ArtistGenreCache::new();
 
     // track analyzations
-    for (_key, (track, analyzation)) in &mut tracks {
+    for (track, analyzation) in tracks.values_mut() {
         dedupe_rating_history(&mut analyzation.rating_history);
 
         let mut weighted_sum = 0.;

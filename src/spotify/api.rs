@@ -6,7 +6,6 @@ use crate::{
         analyze::{Analyzation, RATING_OVERWRITE_WINDOW, TrackAnalyzation, TrackKey},
         caching::use_server_fn,
         playback::{PlaybackOptions, PlaybackSelection},
-        rlog::Rating,
     },
 };
 use dioxus::{fullstack::reqwest, prelude::*};
@@ -20,13 +19,10 @@ use rspotify::{
     scopes,
 };
 #[cfg(feature = "server")]
-use rspotify_http::BaseHttpClient;
-#[cfg(feature = "server")]
 use rspotify_model::Page;
 use rspotify_model::{
-    ArtistId, CurrentPlaybackContext, FullArtist, FullTrack, PlayHistory, PlayableId, PlayableItem,
-    PlaylistId, PlaylistItem, PlaylistTracksRef, PrivateUser, SearchResult, SearchType,
-    SimplifiedArtist, SimplifiedPlaylist, TrackId,
+    ArtistId, CurrentPlaybackContext, FullArtist, FullTrack, PlayHistory, PlayableItem, PlaylistId,
+    PlaylistItem, PlaylistTracksRef, PrivateUser, SimplifiedArtist, SimplifiedPlaylist, TrackId,
 };
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
@@ -34,8 +30,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fmt::{self, Display, Formatter},
-    iter,
-    ops::DerefMut,
     sync::{LazyLock, OnceLock},
 };
 #[cfg(feature = "server")]
@@ -249,7 +243,7 @@ where
     T: DeserializeOwned + Debug,
 {
     let mut num_tries = 0;
-    let permit = permit.acquire().await?;
+    let _permit = permit.acquire().await?;
     loop {
         let res = f(args.clone()).await;
         if let Err(ClientError::Http(ref http)) = res
@@ -304,7 +298,7 @@ caching!(
 
         use crate::spotify::analyze::TrackKey;
 
-        let mut current_snapshot_ids = playlists
+        let current_snapshot_ids = playlists
             .iter()
             .flat_map(|(_, playlists)| {
                 playlists
@@ -1021,7 +1015,7 @@ async fn lastfm_top_tags_inner(
                 ])
                 .send()
                 .await
-                .map_err(|err| rspotify_http::HttpError::Client(err))?;
+                .map_err(rspotify_http::HttpError::Client)?;
             if !response.status().is_success() {
                 return Err(ClientError::from(rspotify_http::HttpError::StatusCode(
                     response,
@@ -1031,7 +1025,7 @@ async fn lastfm_top_tags_inner(
             let deserialized = response
                 .json::<LastFmTopTagsResponse>()
                 .await
-                .map_err(|err| rspotify_http::HttpError::Client(err))?;
+                .map_err(rspotify_http::HttpError::Client)?;
 
             match deserialized {
                 LastFmTopTagsResponse {
@@ -1039,7 +1033,7 @@ async fn lastfm_top_tags_inner(
                     ..
                 } => Ok(toptags.tag),
                 LastFmTopTagsResponse { error: Some(6), .. } => Ok(Vec::new()), // not found
-                LastFmTopTagsResponse { error, message, .. } => Err(ClientError::Io(std::io::Error::new(std::io::ErrorKind::Other,
+                LastFmTopTagsResponse { error, message, .. } => Err(ClientError::Io(std::io::Error::other(
                     format!("Failed to get last.fm top tags for {key}: error={error:?} message={message:?}")))),
             }
         },

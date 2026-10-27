@@ -33,7 +33,7 @@ macro_rules! caching {
     ($fn_name:ident, $return:ty, $closure:expr, $const:ident, $interval:expr) => {
         #[allow(clippy::crate_in_macro_def)]
         #[cfg(feature = "server")]
-        static $const: crate::spotify::caching::SingleValueCache<$return> = crate::spotify::caching::SingleValueCache {
+        static $const: $crate::spotify::caching::SingleValueCache<$return> = $crate::spotify::caching::SingleValueCache {
             interval: $interval,
             name: stringify!($fn_name),
             updating: tokio::sync::Semaphore::const_new(1),
@@ -43,7 +43,7 @@ macro_rules! caching {
         /// Server-only function, returns output directly
         #[cfg(feature = "server")]
         pub async fn ${ concat($fn_name, _server) }()
-            -> std::sync::Arc<crate::spotify::caching::WithLastFetched<$return>>
+            -> std::sync::Arc<$crate::spotify::caching::WithLastFetched<$return>>
         {
             #[allow(clippy::crate_in_macro_def)]
             use crate::spotify::caching::Cache;
@@ -118,17 +118,13 @@ mod server_only {
         fmt::Display,
         hash::Hash,
         marker::PhantomData,
-        ops::{Deref, DerefMut},
         path::PathBuf,
-        sync::{
-            Arc, LazyLock,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::{Arc, LazyLock},
     };
     use time::{Duration, UtcDateTime};
     use tokio::{
         fs,
-        sync::{Mutex, RwLock, Semaphore, TryLockError},
+        sync::{RwLock, Semaphore},
         time::{Duration as TokioDuration, sleep},
     };
 
@@ -382,21 +378,12 @@ mod server_only {
             })
         }
 
-        fn read_mem_cache(
-            &self,
-            _: &Self::K,
-        ) -> impl Future<Output = Option<Arc<WithLastFetched<Self::V>>>> + Send {
-            async { self.cache.read().await.as_ref().map(|arc| Arc::clone(arc)) }
+        async fn read_mem_cache(&self, _: &Self::K) -> Option<Arc<WithLastFetched<Self::V>>> {
+            self.cache.read().await.as_ref().map(Arc::clone)
         }
 
-        fn write_mem_cache(
-            &self,
-            _: &Self::K,
-            value: Arc<WithLastFetched<Self::V>>,
-        ) -> impl Future<Output = ()> + Send {
-            async {
-                *self.cache.write().await = Some(value);
-            }
+        async fn write_mem_cache(&self, _: &Self::K, value: Arc<WithLastFetched<Self::V>>) {
+            *self.cache.write().await = Some(value);
         }
     }
 
@@ -448,19 +435,10 @@ mod server_only {
             })
         }
 
-        fn read_mem_cache(
-            &self,
-            _key: &Self::K,
-        ) -> impl Future<Output = Option<Arc<WithLastFetched<Self::V>>>> + Send {
-            async { None }
+        async fn read_mem_cache(&self, _key: &Self::K) -> Option<Arc<WithLastFetched<Self::V>>> {
+            None
         }
 
-        fn write_mem_cache(
-            &self,
-            _key: &Self::K,
-            _value: Arc<WithLastFetched<Self::V>>,
-        ) -> impl Future<Output = ()> + Send {
-            async {}
-        }
+        async fn write_mem_cache(&self, _key: &Self::K, _value: Arc<WithLastFetched<Self::V>>) {}
     }
 }
