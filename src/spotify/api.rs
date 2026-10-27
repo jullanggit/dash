@@ -462,6 +462,7 @@ caching!(
     Duration::minutes(1)
 );
 
+pub const PLAYBACK_STATE_INTERVAL: Duration = Duration::seconds(2);
 caching!(
     playback_state,
     Option<CurrentPlaybackContext>,
@@ -478,7 +479,7 @@ caching!(
         .await?)
     },
     PLAYBACK_STATE,
-    Duration::seconds(2)
+    PLAYBACK_STATE_INTERVAL
 );
 
 caching!(

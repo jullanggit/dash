@@ -42,6 +42,7 @@ tokio = {
   default-features = false,
   features = [
     "fs",
+    "time",
   ],
   optional = true
 }

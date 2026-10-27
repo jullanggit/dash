@@ -8,3 +8,7 @@ pub mod analyze;
 pub mod caching;
 pub mod playback;
 mod rlog;
+#[cfg(feature = "server")]
+mod scrobble;
+#[cfg(feature = "server")]
+pub use scrobble::*;
