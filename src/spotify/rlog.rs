@@ -93,7 +93,7 @@ impl RatingLog {
 }
 
 #[expect(deprecated)]
-fn make_dummy_fulltrack(track: TrackKey) -> FullTrack {
+pub fn make_dummy_fulltrack(track: TrackKey) -> FullTrack {
     FullTrack {
         id: None,
         name: track.name,

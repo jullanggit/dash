@@ -152,7 +152,7 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
             if age_secs <= maturity {
                 (maturity / ramp) * (min_hl + (ramp / maturity) * age_secs).ln()
             } else {
-                (maturity / ramp) * min_hl.ln() + (age_secs - maturity) / max_hl
+                (maturity / ramp) * max_hl.ln() + (age_secs - maturity) / max_hl
             }
         };
 
@@ -237,6 +237,11 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
 
 #[cfg(test)]
 mod tests {
+    use crate::spotify::{
+        analyze::{Analyzation, TrackAnalyzation, TrackKey, analyze},
+        rlog::make_dummy_fulltrack,
+    };
+
     use super::dedupe_rating_history;
     use time::{Date, Duration, Month, Time, UtcDateTime};
 
@@ -282,5 +287,61 @@ mod tests {
 
         assert_eq!(history, vec![(date_time(8), 3.0), (date_time(14), 4.0)]);
         assert_eq!(history[1].0 - history[0].0, Duration::minutes(6));
+    }
+
+    #[test]
+    fn rating_decay() {
+        assert_eq!(
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(analyze(
+                    vec![(
+                        TrackKey::default(),
+                        (
+                            make_dummy_fulltrack(TrackKey::default()),
+                            TrackAnalyzation {
+                                rating_history: vec![
+                                    (
+                                        UtcDateTime::new(
+                                            Date::from_calendar_date(2026, Month::July, 1).unwrap(),
+                                            Time::MIDNIGHT,
+                                        ),
+                                        4.08,
+                                    ),
+                                    (
+                                        UtcDateTime::new(
+                                            Date::from_calendar_date(2026, Month::August, 20)
+                                                .unwrap(),
+                                            Time::MIDNIGHT,
+                                        ),
+                                        4.18,
+                                    ),
+                                    (
+                                        UtcDateTime::new(
+                                            Date::from_calendar_date(2026, Month::October, 18)
+                                                .unwrap(),
+                                            Time::MIDNIGHT,
+                                        ),
+                                        4.65,
+                                    ),
+                                ],
+                                ..Default::default()
+                            },
+                        ),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ))
+                .tracks
+                .into_values()
+                .next()
+                .unwrap()
+                .1
+                .canonical_rating_history
+                .into_iter()
+                .map(|(time, value)| (value * 100.) as u16)
+                .collect::<Vec<_>>(),
+            vec![408, 415, 440] // snapshot, we don't care about the _exact_ values, just that they are reasonably weighted
+        );
     }
 }
