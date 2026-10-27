@@ -138,9 +138,25 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
     for (track, analyzation) in tracks.values_mut() {
         dedupe_rating_history(&mut analyzation.rating_history);
 
-        let Some(first_rating) = analyzation.rating_history.first() else {
+        let Some(&(first_rating_time, _)) = analyzation.rating_history.first() else {
             continue;
         };
+
+        // integrate rating decay over time, with linearly increasing half-life based on time known
+        // TODO: use amount of listens as a more accurate proxy for familiarity
+        let min_hl = MIN_HALF_LIFE.as_seconds_f64(); // convert to seconds to be able to call ln()
+        let max_hl = MAX_HALF_LIFE.as_seconds_f64();
+        let maturity = MATURITY_TIME.as_seconds_f64();
+        let ramp = max_hl - min_hl;
+        let decay_integral = |age_secs: f64| -> f64 {
+            if age_secs <= maturity {
+                (maturity / ramp) * (min_hl + (ramp / maturity) * age_secs).ln()
+            } else {
+                (maturity / ramp) * min_hl.ln() + (age_secs - maturity) / max_hl
+            }
+        };
+
+        let now_integral = decay_integral((now - first_rating_time).as_seconds_f64());
 
         let mut weighted_sum = 0.;
         let mut weight_sum = 0.;
@@ -148,13 +164,8 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
             .rating_history
             .iter()
             .map(|&(time, rating)| {
-                // TODO: use amount of listens as a more accurate proxy for familiarity
-                let time_known = time - first_rating.0;
-                let maturity_fraction = (time_known / MATURITY_TIME).clamp(0., 1.);
-                let half_life =
-                    (MIN_HALF_LIFE + (MAX_HALF_LIFE - MIN_HALF_LIFE) * maturity_fraction);
-
-                let weight = 0.5_f64.powf((now - time) / half_life) as f32;
+                let rating_integral = decay_integral((time - first_rating_time).as_seconds_f64());
+                let weight = 0.5_f64.powf((now_integral - rating_integral).max(0.0)) as f32;
                 weighted_sum += rating * weight;
                 weight_sum += weight;
                 (time, weighted_sum / weight_sum)
