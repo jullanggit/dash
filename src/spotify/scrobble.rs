@@ -41,7 +41,9 @@ impl ScrobbleLog {
                 .open()?,
         };
 
-        let _ = out.add_spotify_extended_streaming_history();
+        if let Err(e) = out.add_spotify_extended_streaming_history().await {
+            warn!("Failed to add spotify extended streaming history: {e}")
+        }
 
         out.sort();
         out.dedup();
@@ -85,7 +87,7 @@ impl ScrobbleLog {
             }
         }
     }
-    /// leaves `self.entries` unsorted
+    /// notes: leaves `self.entries` unsorted
     async fn add_spotify_extended_streaming_history(&mut self) -> anyhow::Result<()> {
         #[derive(Deserialize)]
         struct StreamingHistoryEntry {
