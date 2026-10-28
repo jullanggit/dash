@@ -93,7 +93,7 @@ impl ScrobbleLog {
         struct StreamingHistoryEntry {
             ts: String,
             ms_played: u32,
-            spotify_track_uri: String,
+            spotify_track_uri: Option<String>,
         }
         let mut read_dir = read_dir("/tmp/Spotify Extended Streaming History").await?;
 
@@ -105,7 +105,8 @@ impl ScrobbleLog {
                     serde_json::from_slice(&fs::read(entry.path()).await?)?;
 
                 for entry in data {
-                    if let Ok(track_id) = TrackId::from_uri(&entry.spotify_track_uri)
+                    if let Some(uri) = &entry.spotify_track_uri
+                        && let Ok(track_id) = TrackId::from_uri(uri)
                         && let Ok(full_track) =
                             full_track_maybe_cached(None, &track_id, ratings).await
                     {
