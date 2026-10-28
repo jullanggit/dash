@@ -685,16 +685,27 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
     Ok(playlist)
 }
 
-/// Returns the [FullTrack] for the given `track_key`.
+/// Returns the [FullTrack] for the given `track_key` or `track_id`.
+/// `track_key` is preferred if available as it avoids O(n) search over tracks.
 /// Checks ratings as cache first, falls back to fetching from the api using `track_id`.
 /// Does not cache the api result.
 #[cfg(feature = "server")]
-async fn full_track_maybe_cached(
-    track_key: &TrackKey,
-    track_id: &TrackId<'static>,
+pub async fn full_track_maybe_cached<'a>(
+    track_key: Option<&TrackKey>,
+    track_id: &TrackId<'a>,
     ratings: &Analyzation,
 ) -> Result<FullTrack> {
-    if let Some((track, _)) = ratings.tracks.get(track_key) {
+    // O(1)
+    if let Some(track_key) = track_key
+        && let Some((track, _)) = ratings.tracks.get(track_key)
+    {
+        return Ok(track.clone());
+    // O(n)
+    } else if let Some((track, _)) = ratings
+        .tracks
+        .values()
+        .find(|(full_track, _)| full_track.id.as_ref() == Some(track_id))
+    {
         return Ok(track.clone());
     }
 
@@ -743,7 +754,7 @@ pub async fn add_rating(
     let mut cached_ratings =
         Arc::unwrap_or_clone(RATINGS.read_cache(&()).await.unwrap_or_default());
 
-    let track = full_track_maybe_cached(&track_key, &track_id, &cached_ratings.value).await?;
+    let track = full_track_maybe_cached(Some(&track_key), &track_id, &cached_ratings.value).await?;
 
     let entry = cached_ratings
         .value
