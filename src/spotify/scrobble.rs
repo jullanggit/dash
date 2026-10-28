@@ -12,7 +12,7 @@ use tokio::{
 };
 
 use crate::spotify::{
-    PLAYBACK_STATE_INTERVAL, analyze::TrackKey, caching::WithLastFetched, full_track_maybe_cached,
+    PLAYBACK_STATE_INTERVAL, analyze::TrackKey, caching::WithLastFetched, full_track,
     playback_state_server, ratings_server,
 };
 
@@ -107,9 +107,8 @@ impl ScrobbleLog {
                 for entry in data {
                     if let Some(uri) = &entry.spotify_track_uri
                         && let Ok(track_id) = TrackId::from_uri(uri)
-                        && let Ok(full_track) =
-                            full_track_maybe_cached(None, &track_id, ratings).await
                     {
+                        let full_track = full_track(None, &track_id, ratings).await;
                         self.entries.push(Scrobble {
                             track: TrackKey::from_track(&full_track),
                             start: UtcDateTime::parse(&entry.ts, &Rfc3339)

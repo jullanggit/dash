@@ -690,35 +690,51 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
 /// Checks ratings as cache first, falls back to fetching from the api using `track_id`.
 /// Does not cache the api result.
 #[cfg(feature = "server")]
-pub async fn full_track_maybe_cached<'a>(
+pub async fn full_track<'a>(
     track_key: Option<&TrackKey>,
     track_id: &TrackId<'a>,
     ratings: &Analyzation,
-) -> Result<FullTrack> {
+) -> FullTrack {
     // O(1)
     if let Some(track_key) = track_key
         && let Some((track, _)) = ratings.tracks.get(track_key)
     {
-        return Ok(track.clone());
+        return track.clone();
     // O(n)
     } else if let Some((track, _)) = ratings
         .tracks
         .values()
         .find(|(full_track, _)| full_track.id.as_ref() == Some(track_id))
     {
-        return Ok(track.clone());
+        return track.clone();
     }
 
-    let spotify = spotify().await;
-    retrying(
-        move |(spotify, track_id)| async move { spotify.track(track_id, None).await },
-        (spotify, track_id.clone()),
-        RequestPermit::Tracks,
-    )
-    .await
-    .with_context(|| format!("Failed to fetch track {track_id}"))
-    .map_err(Into::into)
+    full_track_api_server(track_id.clone().into_static())
+        .await
+        .value
+        .clone()
 }
+
+caching_hashmap!(
+    full_track_api,
+    TrackId<'static>,
+    FullTrack,
+    |track_id, _| async move {
+        info!("Getting track with id {track_id}");
+
+        let spotify = spotify().await;
+
+        retrying(
+            move |track_id| async move { spotify.track(track_id, None).await },
+            track_id.clone(),
+            RequestPermit::Tracks,
+        )
+        .await
+        .with_context(|| format!("Failed to get track {track_id}"))
+    },
+    TRACKS,
+    Duration::weeks(4) // assume tracks are mostly static
+);
 
 /// Returns the canonical rating, if there was a rating within the [RATING_OVERWRITE_WINDOW]
 #[server]
@@ -754,7 +770,7 @@ pub async fn add_rating(
     let mut cached_ratings =
         Arc::unwrap_or_clone(RATINGS.read_cache(&()).await.unwrap_or_default());
 
-    let track = full_track_maybe_cached(Some(&track_key), &track_id, &cached_ratings.value).await?;
+    let track = full_track(Some(&track_key), &track_id, &cached_ratings.value).await;
 
     let entry = cached_ratings
         .value
