@@ -240,8 +240,6 @@ mod server_only {
             Fut: Future<Output = Result<Self::V, anyhow::Error>> + Send + 'static,
         {
             async move {
-                let now = UtcDateTime::now();
-
                 let guard = self.updating(&key).await.try_acquire().ok();
                 let cached = self.read_cache(&key).await;
                 // (guard, needs update)
@@ -250,7 +248,9 @@ mod server_only {
                         guard,
                         cached
                             .as_ref()
-                            .map(|cached| now > cached.last_fetched + self.interval())
+                            .map(|cached| {
+                                UtcDateTime::now() > cached.last_fetched + self.interval()
+                            })
                             .unwrap_or(true),
                     )
                 });
@@ -268,7 +268,7 @@ mod server_only {
                         };
                         let wrap = move |value: Self::V| {
                             Arc::new(WithLastFetched {
-                                last_fetched: now,
+                                last_fetched: UtcDateTime::now(), // value freshness is most likely to correlate with end time, so use that instead of start time
                                 value,
                             })
                         };
