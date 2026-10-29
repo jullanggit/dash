@@ -74,8 +74,10 @@ macro_rules! RequestPermits {
 
 // best guess at spotify's black-box rate limit buckets
 RequestPermits!(
-    // /me/playlists, /playlists/*, /me/tracks, /track/*, /artists/*, /me, /me/player
-    Spotify,
+    // /me/playlists, /playlists/*, /me/tracks, /track/*, /artists/*, /me
+    General,
+    // /me/player
+    Player,
     // last.fm track.getTopTags
     LastFmTopTags
 );
@@ -145,7 +147,7 @@ caching!(
                         .await
                 }
             },
-            RequestPermit::Spotify,
+            RequestPermit::General,
         )
         .await;
 
@@ -338,7 +340,7 @@ caching!(
                                 .await
                         }
                     },
-                    RequestPermit::Spotify,
+                    RequestPermit::General,
                 )
                 .await;
 
@@ -423,7 +425,7 @@ caching!(
                         .await
                 }
             },
-            RequestPermit::Spotify,
+            RequestPermit::General,
         )
         .await;
 
@@ -458,7 +460,7 @@ caching!(
         Ok(retrying(
             move |_| async move { spotify.current_playback(None, None::<[_; 0]>).await },
             (),
-            RequestPermit::Spotify,
+            RequestPermit::Player,
         )
         .await?)
     },
@@ -476,7 +478,7 @@ caching!(
         Ok(retrying(
             move |_| async move { spotify.current_user_queue().await },
             (),
-            RequestPermit::Spotify,
+            RequestPermit::Player,
         )
         .await?
         .queue)
@@ -499,7 +501,7 @@ pub async fn add_to_queue(
                 spotify.add_item_to_queue(track_id.into(), None).await
             },
             (spotify, track_id.clone()),
-            RequestPermit::Spotify,
+            RequestPermit::Player,
             // 404 means the track can't be queued, so retrying won't help. Fail fast so a different song gets queued instead.
             &[404],
         )
@@ -570,7 +572,7 @@ caching!(
         Ok(retrying(
             move |_| async move { spotify.current_user_recently_played(None, None).await },
             (),
-            RequestPermit::Spotify,
+            RequestPermit::Player,
         )
         .await?
         .items)
@@ -610,7 +612,7 @@ caching!(
         retrying(
             move |_| async move { spotify.me().await },
             (),
-            RequestPermit::Spotify,
+            RequestPermit::General,
         )
         .await
         .context("Failed to get current Spotify user")
@@ -643,7 +645,7 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
                 .await
         },
         (spotify, user.value.id.as_ref(), playlist_name),
-        RequestPermit::Spotify,
+        RequestPermit::General,
     )
     .await
     .context("Failed to create rating playlist")?;
@@ -717,7 +719,7 @@ caching_hashmap!(
         retrying(
             move |track_id| async move { spotify.track(track_id, None).await },
             track_id.clone(),
-            RequestPermit::Spotify,
+            RequestPermit::General,
         )
         .await
         .with_context(|| format!("Failed to get track {track_id}"))
@@ -803,7 +805,7 @@ caching_hashmap!(
         retrying(
             move |artist_id| async move { spotify.artist(artist_id).await },
             artist_id.clone(),
-            RequestPermit::Spotify,
+            RequestPermit::General,
         )
         .await
         .with_context(|| format!("Failed to get artist {artist_id}"))
@@ -955,7 +957,7 @@ caching_hashmap!(
                         .await
                 }
             },
-            RequestPermit::Spotify,
+            RequestPermit::General,
         )
         .await;
 
