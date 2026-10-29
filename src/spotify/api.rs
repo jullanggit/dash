@@ -72,21 +72,12 @@ macro_rules! RequestPermits {
     };
 }
 
+// best guess at spotify's black-box rate limit buckets
 RequestPermits!(
-    // /me/playlists
-    MyPlaylists,
-    // /playlists/*
-    Playlists,
-    // /me/tracks
-    SavedTracks,
+    // /me/playlists, /playlists/*, /me/tracks, /track/*, /artists/*, /me
+    General,
     // /me/player
     Player,
-    // /track
-    Tracks,
-    // /artists
-    Artists,
-    // /me
-    Me,
     // last.fm track.getTopTags
     LastFmTopTags
 );
@@ -156,7 +147,7 @@ caching!(
                         .await
                 }
             },
-            RequestPermit::MyPlaylists,
+            RequestPermit::General,
         )
         .await;
 
@@ -349,7 +340,7 @@ caching!(
                                 .await
                         }
                     },
-                    RequestPermit::Playlists,
+                    RequestPermit::General,
                 )
                 .await;
 
@@ -434,7 +425,7 @@ caching!(
                         .await
                 }
             },
-            RequestPermit::SavedTracks,
+            RequestPermit::General,
         )
         .await;
 
@@ -621,7 +612,7 @@ caching!(
         retrying(
             move |_| async move { spotify.me().await },
             (),
-            RequestPermit::Me,
+            RequestPermit::General,
         )
         .await
         .context("Failed to get current Spotify user")
@@ -654,7 +645,7 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
                 .await
         },
         (spotify, user.value.id.as_ref(), playlist_name),
-        RequestPermit::MyPlaylists,
+        RequestPermit::General,
     )
     .await
     .context("Failed to create rating playlist")?;
@@ -728,7 +719,7 @@ caching_hashmap!(
         retrying(
             move |track_id| async move { spotify.track(track_id, None).await },
             track_id.clone(),
-            RequestPermit::Tracks,
+            RequestPermit::General,
         )
         .await
         .with_context(|| format!("Failed to get track {track_id}"))
@@ -814,7 +805,7 @@ caching_hashmap!(
         retrying(
             move |artist_id| async move { spotify.artist(artist_id).await },
             artist_id.clone(),
-            RequestPermit::Artists,
+            RequestPermit::General,
         )
         .await
         .with_context(|| format!("Failed to get artist {artist_id}"))
@@ -966,7 +957,7 @@ caching_hashmap!(
                         .await
                 }
             },
-            RequestPermit::Playlists,
+            RequestPermit::General,
         )
         .await;
 
