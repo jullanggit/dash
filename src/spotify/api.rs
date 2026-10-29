@@ -260,6 +260,7 @@ where
                             .find(|(name, _)| name.as_str() == "retry-after")
                             .and_then(|(_, value)| value.to_str().ok())
                             .and_then(|str| str.parse().ok())
+                            .map(|num: u64| num + 1) // to be safe :)
                     })
                     .flatten()
                     .unwrap_or_else(|| {
