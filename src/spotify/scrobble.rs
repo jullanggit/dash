@@ -143,9 +143,9 @@ pub async fn scrobble() -> anyhow::Result<()> {
             let track = TrackKey::from_track(fulltrack);
 
             let duration_played = if last_track.as_ref() == Some(&track) {
-                PLAYBACK_STATE_INTERVAL
+                last_fetched - last_last_fetched
             } else {
-                PLAYBACK_STATE_INTERVAL / 2 // wasn't playing before, take average
+                (last_fetched - last_last_fetched) / 2 // wasn't playing before, take average
             };
             if let Some(last) = slog.entries.last_mut()
                 && last.track == track
