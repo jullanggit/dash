@@ -142,10 +142,14 @@ pub async fn scrobble() -> anyhow::Result<()> {
             let now = UtcDateTime::now();
             let track = TrackKey::from_track(fulltrack);
 
-            let duration_played = if last_track.as_ref() == Some(&track) {
-                last_fetched - last_last_fetched
+            let fetch_diff = *last_fetched - last_last_fetched;
+            // guard against retry-afters while requesting playback state. After a long one, the same song _could_ still be playing, but what happened inbetween is unknown
+            let duration_played = if fetch_diff > time::Duration::minutes(5) {
+                time::Duration::seconds(1)
+            } else if last_track.as_ref() == Some(&track) {
+                fetch_diff
             } else {
-                (last_fetched - last_last_fetched) / 2 // wasn't playing before, take average
+                fetch_diff / 2 // wasn't playing before, take average
             };
             if let Some(last) = slog.entries.last_mut()
                 && last.track == track
