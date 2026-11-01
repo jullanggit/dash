@@ -42,7 +42,7 @@ impl ScrobbleLog {
         };
 
         if let Err(e) = out.add_spotify_extended_streaming_history().await {
-            warn!("Failed to add spotify extended streaming history: {e}")
+            warn!("Failed to add spotify extended streaming history: {e:#}")
         }
 
         out.sort();

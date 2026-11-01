@@ -61,7 +61,7 @@ fn main() {
         tokio::spawn(handle_weighted_playback());
         tokio::spawn(async {
             if let Err(e) = scrobble().await {
-                error!("Failed to scrobble: {e}");
+                error!("Failed to scrobble: {e:#}");
             } else {
                 unreachable!("scrobble only returns on error");
             }

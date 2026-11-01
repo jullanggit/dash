@@ -508,7 +508,7 @@ pub async fn add_to_queue(
         .await;
     if let Err(e) = res {
         Err(anyhow::anyhow!(
-            "Failed to add track \"{track_key}\" ({track_id}) to queue: {e}"
+            "Failed to add track \"{track_key}\" ({track_id}) to queue: {e:#}"
         ))
     } else {
         info!("Added track \"{track_key}\" ({track_id}) to queue");
@@ -554,7 +554,7 @@ pub async fn add_to_queue(
             .await;
 
         if let Err(e) = res {
-            warn!("Failed to add newly inserted queue item to disk cache: {e}");
+            warn!("Failed to add newly inserted queue item to disk cache: {e:#}");
         }
 
         Ok(())
@@ -671,7 +671,7 @@ async fn get_or_create_playlist(rating: f32) -> Result<SimplifiedPlaylist> {
         .await;
 
     if let Err(e) = ret {
-        warn!("Failed to write newly created playlist to disk cache: {e}")
+        warn!("Failed to write newly created playlist to disk cache: {e:#}")
     }
 
     Ok(playlist)
@@ -787,7 +787,7 @@ pub async fn add_rating(
         .expect("track was just analyzed so it should be present");
 
     if let Err(e) = RATINGS.write_cache(&(), Arc::new(cached_ratings)).await {
-        warn!("Failed to update ratings disk cache: {e}");
+        warn!("Failed to update ratings disk cache: {e:#}");
     }
 
     Ok(canonical_rating)
@@ -841,7 +841,7 @@ async fn artist_genres(artist: &SimplifiedArtist) -> HashMap<String, f32> {
         let full_artist = match full_artist(artist_id).await {
             Ok(artist) => artist,
             Err(e) => {
-                error!("Failed to fetch artist {}: {e}", artist.name);
+                error!("Failed to fetch artist {}: {e:#}", artist.name);
                 return genres;
             }
         };
@@ -861,7 +861,7 @@ async fn artist_genres(artist: &SimplifiedArtist) -> HashMap<String, f32> {
     let lastfm_artist_genres = match lastfm_artist_top_tags(artist.name.clone()).await {
         Ok(genres) => genres,
         Err(e) => {
-            error!("Failed to fetch last.fm artist genres: {e}");
+            error!("Failed to fetch last.fm artist genres: {e:#}");
             Vec::new()
         }
     };
@@ -913,7 +913,7 @@ pub async fn genres_cached(
             let lastfm_genres = match lastfm_top_tags(key).await {
                 Ok(genres) => genres,
                 Err(e) => {
-                    error!("Failed to fetch last.fm genres: {e}");
+                    error!("Failed to fetch last.fm genres: {e:#}");
                     Vec::new()
                 }
             };

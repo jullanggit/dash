@@ -21,7 +21,7 @@ pub fn Login() -> Element {
                                 error.set(None);
                                 nav.push(Route::Spotify {});
                             }
-                            Err(e) => error.set(Some(format!("unauthenticated: {e}"))),
+                            Err(e) => error.set(Some(format!("unauthenticated: {e:#}"))),
                         }
                     }
                 },

@@ -22,7 +22,7 @@ impl Serialize for TrackKey {
         use serde::ser::Error;
         let inner = serde_json::json!([self.name, self.artists]);
         let repr = serde_json::to_string(&inner)
-            .map_err(|e| Error::custom(format!("failed to serialize TrackKey: {e}")))?;
+            .map_err(|e| Error::custom(format!("failed to serialize TrackKey: {e:#}")))?;
         serializer.serialize_str(&repr)
     }
 }
@@ -31,7 +31,7 @@ impl<'de> Deserialize<'de> for TrackKey {
         use serde::de::Error;
         let repr: String = Deserialize::deserialize(deserializer)?;
         let arr: serde_json::Value = serde_json::from_str(&repr)
-            .map_err(|e| Error::custom(format!("failed to deserialize TrackKey: {e}")))?;
+            .map_err(|e| Error::custom(format!("failed to deserialize TrackKey: {e:#}")))?;
         let name = arr[0]
             .as_str()
             .ok_or_else(|| Error::custom("TrackKey: missing name"))?

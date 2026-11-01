@@ -138,7 +138,7 @@ async fn queue_random_songs(last_queued: &mut Vec<(TrackKey, usize)>) {
                         }
                     }
                     Err(e) => {
-                        warn!("_type = playlist uri ({uri}) should be a playlist id: {e}");
+                        warn!("_type = playlist uri ({uri}) should be a playlist id: {e:#}");
                         return;
                     }
                 }
@@ -196,7 +196,7 @@ async fn queue_random_songs(last_queued: &mut Vec<(TrackKey, usize)>) {
         if let Some((track_key, track_id)) = track {
             let res = add_to_queue(track_key.clone(), track_id).await;
             if let Err(e) = res {
-                warn!("{e}")
+                warn!("{e:#}")
             } else {
                 let val = (track_key.clone(), num_in_queue(&track_key) + 1);
                 if i >= last_queued.len() {

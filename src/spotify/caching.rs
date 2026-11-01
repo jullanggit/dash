@@ -281,10 +281,10 @@ mod server_only {
                                     match f(key, Some(clone)).await {
                                         Ok(value) => {
                                             if let Err(e) = write_cache(wrap(value), guard).await {
-                                                error!("Failed to write to disk cache: {e}")
+                                                error!("Failed to write to disk cache: {e:#}")
                                             }
                                         }
-                                        Err(e) => error!("Failed to refresh value: {e}"),
+                                        Err(e) => error!("Failed to refresh value: {e:#}"),
                                     }
                                 });
 
@@ -295,13 +295,13 @@ mod server_only {
                                 Ok(value) => {
                                     let wrapped = wrap(value);
                                     if let Err(e) = write_cache(Arc::clone(&wrapped), guard).await {
-                                        error!("Failed to write to disk cache: {e}")
+                                        error!("Failed to write to disk cache: {e:#}")
                                     }
 
                                     wrapped
                                 }
                                 Err(e) => panic!(
-                                    "Failed to refresh value, and no cached one present: {e}"
+                                    "Failed to refresh value, and no cached one present: {e:#}"
                                 ),
                             },
                         }
