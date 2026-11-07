@@ -27,6 +27,8 @@ use rspotify_model::{
 #[cfg(feature = "server")]
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "server")]
+use std::time::{Duration as StdDuration, Instant};
 use std::{
     collections::HashMap,
     fmt::{self, Display, Formatter},
@@ -51,6 +53,13 @@ macro_rules! RequestPermits {
             #[allow(non_snake_case)]
             #[allow(non_upper_case_globals)]
             static ${concat(_, $path, _request_permit)}: Semaphore = Semaphore::const_new(1);
+
+            /// When the most recent request for this bucket was started, used to rate-limit requests.
+            #[cfg(feature = "server")]
+            #[allow(non_snake_case)]
+            #[allow(non_upper_case_globals)]
+            static ${concat(_, $path, _last_request_start)}: LazyLock<tokio::sync::Mutex<Option<Instant>>> =
+                LazyLock::new(|| tokio::sync::Mutex::new(None));
         )*
 
         #[cfg(feature = "server")]
@@ -67,6 +76,23 @@ macro_rules! RequestPermits {
                         Self::$path => ${concat(_, $path, _request_permit)}.acquire().await.map_err(|e| ClientError::Io(std::io::Error::other(e)))
                     ),*
                 }
+            }
+
+            async fn rate_limit(&self) {
+                let last_request_start = match self {
+                    $(
+                        Self::$path => &${concat(_, $path, _last_request_start)}
+                    ),*
+                };
+                let mut last_start = last_request_start.lock().await;
+                let min_interval = StdDuration::from_secs(1) / MAX_REQUESTS_PER_SECOND;
+                if let Some(previous_start) = *last_start {
+                    let elapsed = previous_start.elapsed();
+                    if elapsed < min_interval {
+                        sleep(min_interval - elapsed).await;
+                    }
+                }
+                *last_start = Some(Instant::now());
             }
         }
     };
@@ -206,6 +232,10 @@ where
     })
 }
 
+/// Maximum number of requests per bucket that may be started per second.
+#[cfg(feature = "server")]
+const MAX_REQUESTS_PER_SECOND: u32 = 4;
+
 /// Retries `f` if it got a too-many-requests error.
 /// Suspends for the duration requested by the spotify API, which may be a long period of time.
 #[cfg(feature = "server")]
@@ -236,6 +266,7 @@ where
     let mut num_tries = 0;
     let _permit = permit.acquire().await?;
     loop {
+        permit.rate_limit().await;
         let res = f(args.clone()).await;
         if let Err(ClientError::Http(ref http)) = res
             && let rspotify_http::HttpError::StatusCode(response) = http.as_ref()
