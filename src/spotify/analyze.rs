@@ -100,6 +100,26 @@ impl Analyzation {
 
 pub type AnalyzedTracks = HashMap<TrackKey, (FullTrack, TrackAnalyzation)>;
 
+/// All plays of a track as `(start, played duration)`, sorted by start time.
+#[cfg(feature = "server")]
+pub type PlayHistory = HashMap<TrackKey, Vec<(UtcDateTime, Duration)>>;
+
+/// Half life of a rating in full plays
+#[cfg(feature = "server")]
+const PLAYS_HALF_LIFE: f64 = 15.0;
+
+/// Familiarity with a track based on the number of full plays
+#[cfg(feature = "server")]
+fn familiarity_weight(full_plays: f64) -> f64 {
+    1.0 + full_plays.ln_1p()
+}
+
+/// Relative weight of a rating after `plays_since` full plays have happened.
+#[cfg(feature = "server")]
+fn plays_decay(plays_since: f64) -> f64 {
+    0.5_f64.powf(plays_since / PLAYS_HALF_LIFE)
+}
+
 fn dedupe_rating_history(rating_history: &mut Vec<(UtcDateTime, f32)>) {
     rating_history.sort_unstable_by_key(|&(time, _)| time);
 
@@ -118,57 +138,71 @@ fn dedupe_rating_history(rating_history: &mut Vec<(UtcDateTime, f32)>) {
     *rating_history = deduped;
 }
 
-/// Build analyzation based on tracks and rating histories
+/// Build analyzation based on tracks, rating histories and play histories
 #[cfg(feature = "server")]
-pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
+pub async fn analyze(mut tracks: AnalyzedTracks, play_history: &PlayHistory) -> Analyzation {
     use crate::spotify::{ArtistGenreCache, genres_cached};
 
-    const MIN_HALF_LIFE: Duration = Duration::days(3);
-    const MAX_HALF_LIFE: Duration = Duration::weeks(52 / 2);
-    const MATURITY_TIME: Duration = Duration::weeks(4 * 3);
-
     trace!("Analyzing ratings");
-
-    let now = UtcDateTime::now();
 
     // Genre lookups depend only on the artist, so share one cache across the whole pass.
     let mut artist_genre_cache = ArtistGenreCache::new();
 
     // track analyzations
-    for (track, analyzation) in tracks.values_mut() {
+    for (key, (track, analyzation)) in tracks.iter_mut() {
         dedupe_rating_history(&mut analyzation.rating_history);
 
-        let Some(&(first_rating_time, _)) = analyzation.rating_history.first() else {
+        if analyzation.rating_history.is_empty() {
             continue;
-        };
+        }
 
-        // integrate rating decay over time, with linearly increasing half-life based on time known
-        // TODO: use amount of listens as a more accurate proxy for familiarity
-        let min_hl = MIN_HALF_LIFE.as_seconds_f64(); // convert to seconds to be able to call ln()
-        let max_hl = MAX_HALF_LIFE.as_seconds_f64();
-        let maturity = MATURITY_TIME.as_seconds_f64();
-        let ramp = max_hl - min_hl;
-        let decay_integral = |age_secs: f64| -> f64 {
-            if age_secs <= maturity {
-                (maturity / ramp) * (min_hl + (ramp / maturity) * age_secs).ln()
+        // Familiarity is measured in full plays: total played time / track duration.
+        let track_duration_secs = track.duration.num_milliseconds() as f64 / 1000.0;
+        let plays = play_history.get(key).map(Vec::as_slice).unwrap_or_default();
+        let full_plays = |played_secs: f64| {
+            if track_duration_secs > 0.0 {
+                played_secs / track_duration_secs
             } else {
-                (maturity / ramp) * max_hl.ln() + (age_secs - maturity) / max_hl
+                0.0
             }
         };
 
-        let now_integral = decay_integral((now - first_rating_time).as_seconds_f64());
+        let last_rating_time = analyzation
+            .rating_history
+            .last()
+            .map(|(time, _)| *time)
+            .expect("checked non-empty above");
+        let plays_at_last_rating = full_plays(
+            plays
+                .iter()
+                .take_while(|(start, _)| *start <= last_rating_time)
+                .map(|(_, duration)| duration.as_seconds_f64())
+                .sum(),
+        );
 
-        let mut weighted_sum = 0.;
-        let mut weight_sum = 0.;
+        let mut played_secs = 0.0;
+        let mut next_play = 0;
+
+        let mut weighted_sum = 0.0;
+        let mut weight_sum = 0.0;
         let canonical_rating_history = analyzation
             .rating_history
             .iter()
             .map(|&(time, rating)| {
-                let rating_integral = decay_integral((time - first_rating_time).as_seconds_f64());
-                let weight = 0.5_f64.powf((now_integral - rating_integral).max(0.0)) as f32;
-                weighted_sum += rating * weight;
+                // accumulate the plays that happened before this rating
+                while let Some((start, duration)) = plays.get(next_play)
+                    && *start <= time
+                {
+                    played_secs += duration.as_seconds_f64();
+                    next_play += 1;
+                }
+
+                let plays_before = full_plays(played_secs);
+                let weight = familiarity_weight(plays_before)
+                    * plays_decay(plays_at_last_rating - plays_before);
+                weighted_sum += rating as f64 * weight;
                 weight_sum += weight;
-                (time, weighted_sum / weight_sum)
+                (time, (weighted_sum / weight_sum) as f32)
             })
             .collect::<Vec<_>>();
 
@@ -238,7 +272,10 @@ pub async fn analyze(mut tracks: AnalyzedTracks) -> Analyzation {
 #[cfg(test)]
 mod tests {
     use crate::spotify::{
-        analyze::{Analyzation, TrackAnalyzation, TrackKey, analyze},
+        analyze::{
+            AnalyzedTracks, PLAYS_HALF_LIFE, PlayHistory, TrackAnalyzation, TrackKey, analyze,
+            familiarity_weight, plays_decay,
+        },
         rlog::make_dummy_fulltrack,
     };
 
@@ -249,6 +286,13 @@ mod tests {
         UtcDateTime::new(
             Date::from_calendar_date(2024, Month::January, 1).unwrap(),
             Time::from_hms(0, minute, 0).unwrap(),
+        )
+    }
+
+    fn midnight(year: i32, month: Month, day: u8) -> UtcDateTime {
+        UtcDateTime::new(
+            Date::from_calendar_date(year, month, day).unwrap(),
+            Time::MIDNIGHT,
         )
     }
 
@@ -290,48 +334,68 @@ mod tests {
     }
 
     #[test]
-    fn rating_decay() {
+    fn familiarity_grows_logarithmically() {
+        assert_eq!(familiarity_weight(0.0), 1.0);
+
+        // every additional play adds less confidence than the previous one
+        let gains = (0..4)
+            .map(|plays| {
+                let plays = plays as f64;
+                familiarity_weight(plays + 1.0) - familiarity_weight(plays)
+            })
+            .collect::<Vec<_>>();
+        assert!(gains.windows(2).all(|pair| pair[1] < pair[0]), "{gains:?}");
+    }
+
+    #[test]
+    fn rating_weight_halves_per_play_half_life() {
+        assert!((plays_decay(0.0) - 1.0).abs() < 1e-12);
+        assert!((plays_decay(PLAYS_HALF_LIFE) - 0.5).abs() < 1e-12);
+        assert!((plays_decay(2.0 * PLAYS_HALF_LIFE) - 0.25).abs() < 1e-12);
+    }
+
+    #[test]
+    fn ratings_are_weighted_by_full_plays() {
+        let track_key = TrackKey::default();
+
+        // `FullTrack::duration` is a `chrono::Duration`, which isn't a direct dependency
+        // here, so set it through the model's JSON representation.
+        let mut track_json = serde_json::to_value(make_dummy_fulltrack(track_key.clone())).unwrap();
+        track_json["duration_ms"] = serde_json::json!(180_000);
+        let track: rspotify_model::FullTrack = serde_json::from_value(track_json).unwrap();
+
+        // A 3-minute song, so each play below is a full play.
+        let play = |month, day| (midnight(2026, month, day), Duration::minutes(3));
+        let play_history = PlayHistory::from([(
+            track_key.clone(),
+            vec![
+                play(Month::June, 1),      // 1 play before the first rating
+                play(Month::August, 1),    // 2 plays before the second rating
+                play(Month::September, 1), // 4 plays before the third rating
+                play(Month::September, 2),
+            ],
+        )]);
+
+        let analyzation = tokio::runtime::Runtime::new().unwrap().block_on(analyze(
+            AnalyzedTracks::from([(
+                track_key,
+                (
+                    track,
+                    TrackAnalyzation {
+                        rating_history: vec![
+                            (midnight(2026, Month::July, 1), 4.0),
+                            (midnight(2026, Month::August, 20), 4.5),
+                            (midnight(2026, Month::October, 18), 3.0),
+                        ],
+                        ..Default::default()
+                    },
+                ),
+            )]),
+            &play_history,
+        ));
+
         assert_eq!(
-            tokio::runtime::Runtime::new()
-                .unwrap()
-                .block_on(analyze(
-                    vec![(
-                        TrackKey::default(),
-                        (
-                            make_dummy_fulltrack(TrackKey::default()),
-                            TrackAnalyzation {
-                                rating_history: vec![
-                                    (
-                                        UtcDateTime::new(
-                                            Date::from_calendar_date(2026, Month::July, 1).unwrap(),
-                                            Time::MIDNIGHT,
-                                        ),
-                                        4.08,
-                                    ),
-                                    (
-                                        UtcDateTime::new(
-                                            Date::from_calendar_date(2026, Month::August, 20)
-                                                .unwrap(),
-                                            Time::MIDNIGHT,
-                                        ),
-                                        4.18,
-                                    ),
-                                    (
-                                        UtcDateTime::new(
-                                            Date::from_calendar_date(2026, Month::October, 18)
-                                                .unwrap(),
-                                            Time::MIDNIGHT,
-                                        ),
-                                        4.65,
-                                    ),
-                                ],
-                                ..Default::default()
-                            },
-                        ),
-                    )]
-                    .into_iter()
-                    .collect(),
-                ))
+            analyzation
                 .tracks
                 .into_values()
                 .next()
@@ -339,9 +403,12 @@ mod tests {
                 .1
                 .canonical_rating_history
                 .into_iter()
-                .map(|(time, value)| (value * 100.) as u16)
+                .map(|(_, value)| (value * 100.) as u16)
                 .collect::<Vec<_>>(),
-            vec![408, 415, 440] // snapshot, we don't care about the _exact_ values, just that they are reasonably weighted
+            // play counts at the ratings are 1, 2 and 4; familiarity is log-scaled and
+            // the ratings are 3, 2 and 0 full plays apart, so they decay by 0.5^0.3,
+            // 0.5^0.2 and 1
+            vec![400, 428, 370]
         );
     }
 }

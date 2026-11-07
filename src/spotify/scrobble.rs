@@ -12,8 +12,10 @@ use tokio::{
 };
 
 use crate::spotify::{
-    PLAYBACK_STATE_INTERVAL, analyze::TrackKey, caching::WithLastFetched, full_track,
-    playback_state_server, ratings_server,
+    PLAYBACK_STATE_INTERVAL,
+    analyze::{PlayHistory, TrackKey},
+    caching::WithLastFetched,
+    full_track, playback_state_server, ratings_server,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -122,6 +124,69 @@ impl ScrobbleLog {
 
         Ok(())
     }
+}
+
+/// Played time per track, derived from the persisted scrobble log.
+///
+/// The log is persisted at most a minute behind the in-memory log, so this is
+/// cached briefly to avoid re-parsing it on every analyzation.
+pub async fn play_history() -> std::sync::Arc<PlayHistory> {
+    use std::sync::{Arc, LazyLock};
+    use tokio::sync::Mutex;
+
+    const CACHE_TTL: time::Duration = time::Duration::seconds(30);
+
+    type CachedHistory = (UtcDateTime, Arc<PlayHistory>);
+    static CACHE: LazyLock<Mutex<Option<CachedHistory>>> = LazyLock::new(|| Mutex::new(None));
+
+    let mut cache = CACHE.lock().await;
+
+    if let Some((fetched_at, history)) = cache.as_ref()
+        && UtcDateTime::now() - *fetched_at < CACHE_TTL
+    {
+        return Arc::clone(history);
+    }
+
+    let history = match read_play_history().await {
+        Some(history) => Arc::new(history),
+        // keep serving the last good value if the log is momentarily unreadable
+        None => cache
+            .as_ref()
+            .map(|(_, history)| Arc::clone(history))
+            .unwrap_or_default(),
+    };
+    *cache = Some((UtcDateTime::now(), Arc::clone(&history)));
+    history
+}
+
+/// Read the persisted scrobble log and group it by track, without modifying it.
+/// Returns `None` if the log is missing or can't be parsed.
+async fn read_play_history() -> Option<PlayHistory> {
+    let path = home_dir()?.join(".local/share/dash/scrobbles.json");
+    let contents = fs::read(path).await.ok()?;
+
+    let entries: Vec<Scrobble> = match serde_json::from_slice(&contents) {
+        Ok(entries) => entries,
+        Err(e) => {
+            warn!("Failed to parse scrobble log: {e:#}");
+            return None;
+        }
+    };
+
+    let mut history = PlayHistory::new();
+    for Scrobble {
+        track,
+        start,
+        duration,
+    } in entries
+    {
+        history.entry(track).or_default().push((start, duration));
+    }
+    for plays in history.values_mut() {
+        plays.sort_unstable_by_key(|(start, _)| *start);
+    }
+
+    Some(history)
 }
 
 pub async fn scrobble() -> anyhow::Result<()> {

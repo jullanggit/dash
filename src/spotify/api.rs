@@ -423,7 +423,8 @@ caching!(
             RLOG.lock().await.sync(&mut ratings).await?;
         }
 
-        let mut analyzation = analyze(ratings).await;
+        let play_history = crate::spotify::play_history().await;
+        let mut analyzation = analyze(ratings, play_history.as_ref()).await;
         analyzation.playlist_snapshot_ids = current_snapshot_ids;
         analyzation.last_full_refetch = last_full_refetch;
         Ok(analyzation)
@@ -810,7 +811,9 @@ pub async fn add_rating(
             .await?;
     }
 
-    cached_ratings.value = analyze(cached_ratings.value.tracks.clone()).await;
+    let play_history = crate::spotify::play_history().await;
+    cached_ratings.value =
+        analyze(cached_ratings.value.tracks.clone(), play_history.as_ref()).await;
 
     let canonical_rating = cached_ratings
         .value
