@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use time::{UtcDateTime, format_description::well_known::Rfc3339};
 use tokio::{
     fs::{self, read_dir},
+    sync::Mutex,
     time::sleep,
 };
 
@@ -30,7 +31,7 @@ struct ScrobbleLog {
     pub entries: Persister<Vec<Scrobble>>,
 }
 impl ScrobbleLog {
-    async fn open() -> anyhow::Result<Self> {
+    fn open() -> anyhow::Result<Self> {
         let path = home_dir()
             .ok_or(anyhow::anyhow!("Failed to get home dir"))?
             .join(".local/share/dash/scrobbles.json");
@@ -42,10 +43,6 @@ impl ScrobbleLog {
                 .auto_save(true)
                 .open()?,
         };
-
-        if let Err(e) = out.add_spotify_extended_streaming_history().await {
-            warn!("Failed to add spotify extended streaming history: {e:#}")
-        }
 
         out.sort();
         out.dedup();
@@ -89,88 +86,54 @@ impl ScrobbleLog {
             }
         }
     }
-    /// notes: leaves `self.entries` unsorted
-    async fn add_spotify_extended_streaming_history(&mut self) -> anyhow::Result<()> {
-        #[derive(Deserialize)]
-        struct StreamingHistoryEntry {
-            ts: String,
-            ms_played: u32,
-            spotify_track_uri: Option<String>,
-        }
-        let mut read_dir = read_dir("/tmp/Spotify Extended Streaming History").await?;
+}
 
-        let ratings = &ratings_server().await.value;
+/// Load scrobbles from Spotify's extended streaming history, if present.
+/// `notes`: the returned entries are unsorted.
+async fn spotify_extended_streaming_history() -> anyhow::Result<Vec<Scrobble>> {
+    #[derive(Deserialize)]
+    struct StreamingHistoryEntry {
+        ts: String,
+        ms_played: u32,
+        spotify_track_uri: Option<String>,
+    }
+    let mut read_dir = read_dir("/tmp/Spotify Extended Streaming History").await?;
+    let mut scrobbles = Vec::new();
 
-        while let Ok(Some(entry)) = read_dir.next_entry().await {
-            if entry.file_name().as_encoded_bytes().ends_with(b".json") {
-                let data: Vec<StreamingHistoryEntry> =
-                    serde_json::from_slice(&fs::read(entry.path()).await?)?;
+    let ratings = &ratings_server().await.value;
 
-                for entry in data {
-                    if let Some(uri) = &entry.spotify_track_uri
-                        && let Ok(track_id) = TrackId::from_uri(uri)
-                    {
-                        let full_track = full_track(None, &track_id, ratings).await;
-                        self.entries.push(Scrobble {
-                            track: TrackKey::from_track(&full_track),
-                            start: UtcDateTime::parse(&entry.ts, &Rfc3339)
-                                .expect("`ts` should be in rfc3339 format"),
-                            duration: time::Duration::milliseconds(entry.ms_played.into()),
-                        });
-                    }
+    while let Ok(Some(entry)) = read_dir.next_entry().await {
+        if entry.file_name().as_encoded_bytes().ends_with(b".json") {
+            let data: Vec<StreamingHistoryEntry> =
+                serde_json::from_slice(&fs::read(entry.path()).await?)?;
+
+            for entry in data {
+                if let Some(uri) = &entry.spotify_track_uri
+                    && let Ok(track_id) = TrackId::from_uri(uri)
+                {
+                    let full_track = full_track(None, &track_id, ratings).await;
+                    scrobbles.push(Scrobble {
+                        track: TrackKey::from_track(&full_track),
+                        start: UtcDateTime::parse(&entry.ts, &Rfc3339)
+                            .expect("`ts` should be in rfc3339 format"),
+                        duration: time::Duration::milliseconds(entry.ms_played.into()),
+                    });
                 }
             }
         }
-
-        Ok(())
     }
+
+    Ok(scrobbles)
 }
 
-/// Played time per track, derived from the persisted scrobble log.
-///
-/// The log is persisted at most a minute behind the in-memory log, so this is
-/// cached briefly to avoid re-parsing it on every analyzation.
+/// The shared, in-memory scrobble log, populated once [`scrobble`] opens it.
+static SLOG: Mutex<Option<ScrobbleLog>> = Mutex::const_new(None);
+
+/// Played time per track, derived from the in-memory scrobble log.
 pub async fn play_history() -> std::sync::Arc<PlayHistory> {
-    use std::sync::{Arc, LazyLock};
-    use tokio::sync::Mutex;
-
-    const CACHE_TTL: time::Duration = time::Duration::seconds(30);
-
-    type CachedHistory = (UtcDateTime, Arc<PlayHistory>);
-    static CACHE: LazyLock<Mutex<Option<CachedHistory>>> = LazyLock::new(|| Mutex::new(None));
-
-    let mut cache = CACHE.lock().await;
-
-    if let Some((fetched_at, history)) = cache.as_ref()
-        && UtcDateTime::now() - *fetched_at < CACHE_TTL
-    {
-        return Arc::clone(history);
-    }
-
-    let history = match read_play_history().await {
-        Some(history) => Arc::new(history),
-        // keep serving the last good value if the log is momentarily unreadable
-        None => cache
-            .as_ref()
-            .map(|(_, history)| Arc::clone(history))
-            .unwrap_or_default(),
-    };
-    *cache = Some((UtcDateTime::now(), Arc::clone(&history)));
-    history
-}
-
-/// Read the persisted scrobble log and group it by track, without modifying it.
-/// Returns `None` if the log is missing or can't be parsed.
-async fn read_play_history() -> Option<PlayHistory> {
-    let path = home_dir()?.join(".local/share/dash/scrobbles.json");
-    let contents = fs::read(path).await.ok()?;
-
-    let entries: Vec<Scrobble> = match serde_json::from_slice(&contents) {
-        Ok(entries) => entries,
-        Err(e) => {
-            warn!("Failed to parse scrobble log: {e:#}");
-            return None;
-        }
+    let slog = SLOG.lock().await;
+    let Some(slog) = slog.as_ref() else {
+        return std::sync::Arc::default();
     };
 
     let mut history = PlayHistory::new();
@@ -178,19 +141,37 @@ async fn read_play_history() -> Option<PlayHistory> {
         track,
         start,
         duration,
-    } in entries
+    } in slog.entries.iter()
     {
-        history.entry(track).or_default().push((start, duration));
+        history
+            .entry(track.clone())
+            .or_default()
+            .push((*start, *duration));
     }
     for plays in history.values_mut() {
         plays.sort_unstable_by_key(|(start, _)| *start);
     }
 
-    Some(history)
+    std::sync::Arc::new(history)
 }
 
 pub async fn scrobble() -> anyhow::Result<()> {
-    let mut slog = ScrobbleLog::open().await?;
+    // Publish the persisted log before loading the extended streaming history: loading
+    // it may trigger an analyzation (via `ratings_server`) which reads the log through
+    // `play_history`.
+    let log = ScrobbleLog::open()?;
+    *SLOG.lock().await = Some(log);
+
+    match spotify_extended_streaming_history().await {
+        Ok(entries) => {
+            let mut slog = SLOG.lock().await;
+            let slog = slog.as_mut().expect("scrobble log is initialized above");
+            slog.entries.extend(entries);
+            slog.sort();
+            slog.dedup();
+        }
+        Err(e) => warn!("Failed to add spotify extended streaming history: {e:#}"),
+    }
 
     let mut last_persist = UtcDateTime::now();
     let mut last_last_fetched = UtcDateTime::MIN;
@@ -216,25 +197,30 @@ pub async fn scrobble() -> anyhow::Result<()> {
             } else {
                 fetch_diff / 2 // wasn't playing before, take average
             };
-            if let Some(last) = slog.entries.last_mut()
-                && last.track == track
+
             {
-                last.duration += duration_played;
-            } else {
-                slog.entries.push(Scrobble {
-                    track: track.clone(),
-                    start: now - duration_played,
-                    duration: duration_played,
-                });
+                let mut slog = SLOG.lock().await;
+                let slog = slog.as_mut().expect("scrobble log is initialized above");
+                if let Some(last) = slog.entries.last_mut()
+                    && last.track == track
+                {
+                    last.duration += duration_played;
+                } else {
+                    slog.entries.push(Scrobble {
+                        track: track.clone(),
+                        start: now - duration_played,
+                        duration: duration_played,
+                    });
+                }
+
+                if last_persist + tokio::time::Duration::from_mins(1) < now {
+                    slog.save()?;
+                    last_persist = now;
+                }
             }
 
             last_track = Some(track);
             last_last_fetched = *last_fetched;
-
-            if last_persist + tokio::time::Duration::from_mins(1) < now {
-                slog.save()?;
-                last_persist = now;
-            }
         } else {
             last_track = None;
         }

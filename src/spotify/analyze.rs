@@ -405,10 +405,10 @@ mod tests {
                 .into_iter()
                 .map(|(_, value)| (value * 100.) as u16)
                 .collect::<Vec<_>>(),
-            // play counts at the ratings are 1, 2 and 4; familiarity is log-scaled and
-            // the ratings are 3, 2 and 0 full plays apart, so they decay by 0.5^0.3,
-            // 0.5^0.2 and 1
-            vec![400, 428, 370]
+            // play counts at the ratings are 1, 2 and 4; familiarity is log-scaled and the
+            // ratings are 3, 2 and 0 full plays apart, so older ones decay by
+            // 0.5^(plays_since / PLAYS_HALF_LIFE)
+            vec![400, 428, 372]
         );
     }
 }
