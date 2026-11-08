@@ -210,8 +210,10 @@ fn canonical_rating_history_chart<'a>(
         .fold(chart, |chart, (track, analyzed, plays)| {
             track.name.hash(&mut hasher);
             let hash: u64 = hasher.finish();
-            let [r, g, b] = array::from_fn(|i| ((hash >> (i * 8)) & 0xFF) as u8);
-            let color = Color::Value(format!("rgb({r}, {g}, {b})"));
+            let [h, s, l] = array::from_fn(|i| ((hash >> (i * 8)) & 0xFF) as u8);
+            let s = (s as f64) / 255. * 70. + 30.; // [30,100]
+            let l = (l as f64) / 255. * 15. + 45.; // [45,60]
+            let color = Color::Value(format!("hsl({h}, {s}%, {l}%)"));
 
             let rating_history = analyzed
                 .rating_history
@@ -241,9 +243,7 @@ fn canonical_rating_history_chart<'a>(
                         .collect::<Vec<Vec<CompositeValue>>>();
 
                     // Same hue as the rating line, but darker so the two stay distinguishable.
-                    let darken = |channel: u8| (channel as f32 * 0.65) as u8;
-                    let plays_color =
-                        Color::Value(format!("rgb({}, {}, {})", darken(r), darken(g), darken(b)));
+                    let plays_color = Color::Value(format!("hsl({}, {}%, {}%)", h, s, l - 10.));
 
                     chart.series(
                         Line::new()
