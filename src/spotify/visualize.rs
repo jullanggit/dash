@@ -199,7 +199,7 @@ fn canonical_rating_history_chart<'a>(
                 .min_interval(1.0)
                 // Faded dark grid lines, distinct from the (lighter) rating grid.
                 .split_line(SplitLine::new().line_style(
-                    LineStyle::new().color(Color::Value("rgba(0, 0, 0, 0.35)".to_string())),
+                    LineStyle::new().color(Color::Value("rgba(255, 255, 255, 0.35)".to_string())),
                 )),
         );
     }
