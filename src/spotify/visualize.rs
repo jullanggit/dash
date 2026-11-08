@@ -231,14 +231,27 @@ fn canonical_rating_history_chart<'a>(
 
             let chart = match plays {
                 Some(plays) if !plays.is_empty() => {
+                    let track_duration_secs = track.duration.num_milliseconds() as f64 / 1000.0;
+                    let track_duration_secs = if track_duration_secs > 0.0 {
+                        track_duration_secs
+                    } else {
+                        180.0 // default to three minutes, matching `analyze`
+                    };
+
                     let mut plays = plays.to_vec();
                     plays.sort_unstable_by_key(|(start, _)| *start);
-                    let total_plays = plays.len() as i64;
-                    let plays = plays
+
+                    let mut points = Vec::with_capacity(plays.len() + 1);
+                    let mut played_secs = 0.0;
+                    for (start, duration) in plays {
+                        played_secs += duration.as_seconds_f64();
+                        points.push((start, played_secs / track_duration_secs));
+                    }
+                    // ensure the line goes to the end
+                    points.push((now, played_secs / track_duration_secs));
+
+                    let plays = points
                         .into_iter()
-                        .enumerate()
-                        .map(|(index, (start, _))| (start, (index + 1) as i64))
-                        .chain(std::iter::once((now, total_plays))) // ensure the line goes to the end
                         .map(to_composite_values)
                         .collect::<Vec<Vec<CompositeValue>>>();
 
@@ -247,13 +260,13 @@ fn canonical_rating_history_chart<'a>(
 
                     chart.series(
                         Line::new()
-                            .name("Number of plays")
+                            .name("Number of full plays")
                             .y_axis_index(1.0)
                             .show_symbol(false)
                             .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
                                 Formatter::Function(JsFunction::new_with_args(
                                     "params",
-                                    "return `${params.seriesName}: ${params.value[1]}`",
+                                    "return `${params.seriesName}: ${params.value[1].toFixed(2)}`",
                                 )),
                             ))
                             .item_style(ItemStyle::new().color(plays_color.clone()))
