@@ -181,7 +181,13 @@ fn canonical_rating_history_chart<'a>(
 
     let mut chart = base_chart(title)
         .x_axis(Axis::new().type_(AxisType::Time))
-        .y_axis(Axis::new().type_(AxisType::Value).min(0.0).max(5.0))
+        .y_axis(
+            Axis::new()
+                .type_(AxisType::Value)
+                .name("Rating")
+                .min(0.0)
+                .max(5.0),
+        )
         .tooltip(
             Tooltip::new().trigger(Trigger::Axis), // .formatter(Formatter::Function(JsFunction::new_with_args(
                                                    //     "params",
