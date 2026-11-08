@@ -158,14 +158,13 @@ pub async fn analyze(mut tracks: AnalyzedTracks, play_history: &PlayHistory) -> 
 
         // Familiarity is measured in full plays: total played time / track duration.
         let track_duration_secs = track.duration.num_milliseconds() as f64 / 1000.0;
-        let plays = play_history.get(key).map(Vec::as_slice).unwrap_or_default();
-        let full_plays = |played_secs: f64| {
-            if track_duration_secs > 0.0 {
-                played_secs / track_duration_secs
-            } else {
-                0.0
-            }
+        let track_duration_secs = if track_duration_secs > 0.0 {
+            track_duration_secs
+        } else {
+            180.0 // default to three minutes
         };
+        let plays = play_history.get(key).map(Vec::as_slice).unwrap_or_default();
+        let full_plays = |played_secs: f64| played_secs / track_duration_secs;
 
         let last_rating_time = analyzation
             .rating_history
@@ -409,6 +408,59 @@ mod tests {
             // ratings are 3, 2 and 0 full plays apart, so older ones decay by
             // 0.5^(plays_since / PLAYS_HALF_LIFE)
             vec![400, 428, 372]
+        );
+    }
+    #[test]
+    fn zero_duration_gets_defaulted() {
+        let track_key = TrackKey::default();
+
+        // default fulltrack, so zero duration
+        let track: rspotify_model::FullTrack = make_dummy_fulltrack(track_key.clone());
+
+        let play = |month, day, plays| {
+            (
+                midnight(2026, month, day),
+                // default song duration is three minutes
+                Duration::seconds((180. * plays) as i64),
+            )
+        };
+        let play_history = PlayHistory::from([(
+            track_key.clone(),
+            vec![
+                play(Month::October, 11, 1.8), // before first rating
+                play(Month::November, 7, 6.),  // before second rating
+            ],
+        )]);
+
+        let analyzation = tokio::runtime::Runtime::new().unwrap().block_on(analyze(
+            AnalyzedTracks::from([(
+                track_key,
+                (
+                    track,
+                    TrackAnalyzation {
+                        rating_history: vec![
+                            (midnight(2026, Month::October, 12), 3.66),
+                            (midnight(2026, Month::November, 8), 3.99),
+                        ],
+                        ..Default::default()
+                    },
+                ),
+            )]),
+            &play_history,
+        ));
+
+        assert_eq!(
+            analyzation
+                .tracks
+                .into_values()
+                .next()
+                .unwrap()
+                .1
+                .canonical_rating_history
+                .into_iter()
+                .map(|(_, value)| (value * 100.) as u16)
+                .collect::<Vec<_>>(),
+            vec![366, 388]
         );
     }
 }

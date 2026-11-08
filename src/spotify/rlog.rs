@@ -80,6 +80,7 @@ impl RatingLog {
             let entry = spotify_ratings.entry(track.clone()).or_insert_with(|| {
                 warn!("missing fulltrack for {track} while syncing tracks");
                 (
+                    // TODO: fetch correct fulltrack by searching for matching tracks using the spotify api
                     make_dummy_fulltrack(track.clone()),
                     TrackAnalyzation::default(),
                 )
