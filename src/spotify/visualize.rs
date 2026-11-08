@@ -163,51 +163,110 @@ pub fn num_ratings_history(data: &Analyzation) -> Chart {
 }
 
 fn canonical_rating_history_chart<'a>(
-    tracks: impl IntoIterator<Item = (&'a FullTrack, &'a TrackAnalyzation)>,
+    tracks: impl IntoIterator<
+        Item = (
+            &'a FullTrack,
+            &'a TrackAnalyzation,
+            Option<&'a [(UtcDateTime, time::Duration)]>,
+        ),
+    >,
     title: &'static str,
     show_added_rating_points: bool,
 ) -> Chart {
     use charming::element::{Formatter, JsFunction, Tooltip, Trigger};
 
     let now = UtcDateTime::now();
+    let tracks = tracks.into_iter().collect::<Vec<_>>();
+    let has_plays = tracks.iter().any(|(_, _, plays)| plays.is_some());
+
+    let mut chart = base_chart(title)
+        .x_axis(Axis::new().type_(AxisType::Time))
+        .y_axis(Axis::new().type_(AxisType::Value).min(0.0).max(5.0))
+        .tooltip(
+            Tooltip::new().trigger(Trigger::Axis), // .formatter(Formatter::Function(JsFunction::new_with_args(
+                                                   //     "params",
+                                                   //     "return params.map(p => p.seriesName).join('<br/>');",
+                                                   // ))),
+        );
+
+    if has_plays {
+        chart = chart.y_axis(
+            Axis::new()
+                .type_(AxisType::Value)
+                .position("right")
+                .name("Plays")
+                .min(0.0)
+                .min_interval(1.0)
+                // Faded dark grid lines, distinct from the (lighter) rating grid.
+                .split_line(SplitLine::new().line_style(
+                    LineStyle::new().color(Color::Value("rgba(0, 0, 0, 0.35)".to_string())),
+                )),
+        );
+    }
+
     let mut hasher = DefaultHasher::new();
     tracks
         .into_iter()
-        .map(|(song, analyzed)| {
-            (
-                song,
-                analyzed
-                    .rating_history
-                    .iter()
-                    .copied()
-                    .map(to_composite_values)
-                    .collect::<Vec<Vec<CompositeValue>>>(),
-                analyzed
-                    .canonical_rating_history
-                    .iter()
-                    .cloned()
-                    .chain(std::iter::once((now, analyzed.canonical_rating))) // ensure all lines go to the end
-                    .map(to_composite_values)
-                    .collect::<Vec<Vec<CompositeValue>>>(),
-            )
-        })
-        .fold(
-            base_chart(title)
-                .x_axis(Axis::new().type_(AxisType::Time))
-                .y_axis(Axis::new().type_(AxisType::Value).min(0.0).max(5.0))
-                .tooltip(
-                    Tooltip::new().trigger(Trigger::Axis), // .formatter(Formatter::Function(JsFunction::new_with_args(
-                                                           //     "params",
-                                                           //     "return params.map(p => p.seriesName).join('<br/>');",
-                                                           // ))),
-                ),
-            |chart, (track, rating_history, canonical_history)| {
-                track.name.hash(&mut hasher);
-                let hash: u64 = hasher.finish();
-                let [r, g, b] = array::from_fn(|i| ((hash >> (i * 8)) & 0xFF) as u8);
-                let color = Color::Value(format!("rgb({r}, {g}, {b})"));
+        .fold(chart, |chart, (track, analyzed, plays)| {
+            track.name.hash(&mut hasher);
+            let hash: u64 = hasher.finish();
+            let [r, g, b] = array::from_fn(|i| ((hash >> (i * 8)) & 0xFF) as u8);
+            let color = Color::Value(format!("rgb({r}, {g}, {b})"));
 
-                let chart = chart.series(
+            let rating_history = analyzed
+                .rating_history
+                .iter()
+                .copied()
+                .map(to_composite_values)
+                .collect::<Vec<Vec<CompositeValue>>>();
+            let canonical_history = analyzed
+                .canonical_rating_history
+                .iter()
+                .cloned()
+                .chain(std::iter::once((now, analyzed.canonical_rating))) // ensure all lines go to the end
+                .map(to_composite_values)
+                .collect::<Vec<Vec<CompositeValue>>>();
+
+            let chart = match plays {
+                Some(plays) if !plays.is_empty() => {
+                    let mut plays = plays.to_vec();
+                    plays.sort_unstable_by_key(|(start, _)| *start);
+                    let total_plays = plays.len() as i64;
+                    let plays = plays
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (start, _))| (start, (index + 1) as i64))
+                        .chain(std::iter::once((now, total_plays))) // ensure the line goes to the end
+                        .map(to_composite_values)
+                        .collect::<Vec<Vec<CompositeValue>>>();
+
+                    // Same hue as the rating line, but darker so the two stay distinguishable.
+                    let darken = |channel: u8| (channel as f32 * 0.65) as u8;
+                    let plays_color =
+                        Color::Value(format!("rgb({}, {}, {})", darken(r), darken(g), darken(b)));
+
+                    chart.series(
+                        Line::new()
+                            .name("Number of plays")
+                            .y_axis_index(1.0)
+                            .show_symbol(false)
+                            .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
+                                Formatter::Function(JsFunction::new_with_args(
+                                    "params",
+                                    "return `${params.seriesName}: ${params.value[1]}`",
+                                )),
+                            ))
+                            .item_style(ItemStyle::new().color(plays_color.clone()))
+                            .line_style(LineStyle::new().color(plays_color))
+                            .smooth(true)
+                            .data(plays),
+                    )
+                }
+                _ => chart,
+            };
+
+            let chart =
+                chart.series(
                     Line::new()
                         .name(&track.name)
                         .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
@@ -223,39 +282,48 @@ fn canonical_rating_history_chart<'a>(
                         .data(canonical_history),
                 );
 
-                if !show_added_rating_points {
-                    return chart;
-                }
+            if !show_added_rating_points {
+                return chart;
+            }
 
-                chart.series(
-                    Line::new()
-                        .name("Added rating")
-                        .tooltip(Tooltip::new().trigger(Trigger::Item).formatter(
-                            Formatter::Function(JsFunction::new_with_args(
+            chart.series(
+                Line::new()
+                    .name("Added rating")
+                    .tooltip(
+                        Tooltip::new()
+                            .trigger(Trigger::Item)
+                            .formatter(Formatter::Function(JsFunction::new_with_args(
                                 "params",
                                 "return `${params.seriesName}: ${params.value[1].toFixed(2)}`",
-                            )),
-                        ))
-                        .item_style(ItemStyle::new().color(color.clone()))
-                        .line_style(LineStyle::new().width(0.0).color(color))
-                        .data(rating_history),
-                )
-            },
-        )
+                            ))),
+                    )
+                    .item_style(ItemStyle::new().color(color.clone()))
+                    .line_style(LineStyle::new().width(0.0).color(color))
+                    .data(rating_history),
+            )
+        })
 }
 
 pub fn song_canonical_rating_histories(data: &Analyzation) -> Chart {
     canonical_rating_history_chart(
         data.tracks
             .iter()
-            .map(|(_, (track, analyzed))| (track, analyzed)),
+            .map(|(_, (track, analyzed))| (track, analyzed, None)),
         "Canonical Rating Histories",
         false,
     )
 }
 
-pub fn track_canonical_rating_history(track: &FullTrack, analyzed: &TrackAnalyzation) -> Chart {
-    canonical_rating_history_chart([(track, analyzed)], "Canonical Rating History", true)
+pub fn track_canonical_rating_history(
+    track: &FullTrack,
+    analyzed: &TrackAnalyzation,
+    plays: &[(UtcDateTime, time::Duration)],
+) -> Chart {
+    canonical_rating_history_chart(
+        [(track, analyzed, Some(plays))],
+        "Canonical Rating History",
+        true,
+    )
 }
 
 pub fn canonical_rating_correlations(data: &Analyzation) -> Chart {
